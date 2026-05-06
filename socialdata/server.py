@@ -157,7 +157,10 @@ async def twitter_tweet(tweet_id: str) -> dict[str, Any]:
     if not tid.isdigit():
         return {"error": "tweet_id must be a numeric string"}
     async with _client() as c:
-        r = await c.get(f"{BASE_URL}/twitter/statuses/show/{tid}")
+        # socialdata.tools exposes single-tweet lookup at /twitter/tweets/<id>.
+        # The Twitter v1.1-style /statuses/show/ shape is NOT supported and
+        # returns 404 — this was a wrong-guess at server bring-up.
+        r = await c.get(f"{BASE_URL}/twitter/tweets/{tid}")
         r.raise_for_status()
         return _trim_tweet(r.json())
 
