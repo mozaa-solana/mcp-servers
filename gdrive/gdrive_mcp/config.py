@@ -6,7 +6,12 @@ from dataclasses import dataclass
 
 
 DEFAULT_PAGE_SIZE = 100
-DRIVE_SCOPES = ("https://www.googleapis.com/auth/drive",)
+# `drive` covers Sheets-via-Drive access; `spreadsheets` is added explicitly
+# so the Sheets API treats us as authorized regardless of file ownership.
+DRIVE_SCOPES = (
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/spreadsheets",
+)
 
 
 class ConfigError(RuntimeError):

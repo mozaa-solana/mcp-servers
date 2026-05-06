@@ -8,6 +8,7 @@ from gdrive_mcp.tools._registry import mcp
 
 
 EXPECTED = {
+    # ---- Drive (18) ----
     # about
     "drive_about",
     "drive_list_shared_with_me",
@@ -32,6 +33,22 @@ EXPECTED = {
     "drive_get_revision",
     # permissions
     "drive_list_permissions",
+    # ---- Sheets (12) ----
+    # read
+    "sheets_get_metadata",
+    "sheets_get_values",
+    "sheets_batch_get_values",
+    # write values
+    "sheets_update_values",
+    "sheets_append_values",
+    "sheets_clear_values",
+    "sheets_batch_update_values",
+    # structure
+    "sheets_create_spreadsheet",
+    "sheets_add_sheet",
+    "sheets_delete_sheet",
+    "sheets_rename_sheet",
+    "sheets_duplicate_sheet",
 }
 
 
@@ -43,4 +60,4 @@ async def test_all_tools_registered():
     extra = names - EXPECTED
     assert not missing, f"missing: {sorted(missing)}"
     assert not extra, f"unexpected extra: {sorted(extra)}"
-    assert len(EXPECTED) == 18
+    assert len(EXPECTED) == 30

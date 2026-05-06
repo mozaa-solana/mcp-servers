@@ -106,6 +106,35 @@ def trim_revision(r: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def trim_spreadsheet(s: dict[str, Any] | None) -> dict[str, Any]:
+    """Spreadsheet metadata + flattened tab list."""
+    s = s or {}
+    props = s.get("properties") or {}
+    sheets_out: list[dict[str, Any]] = []
+    for sh in s.get("sheets") or []:
+        p = sh.get("properties") or {}
+        grid = p.get("gridProperties") or {}
+        sheets_out.append(
+            {
+                "sheet_id": p.get("sheetId"),
+                "title": p.get("title"),
+                "index": p.get("index"),
+                "rows": grid.get("rowCount"),
+                "cols": grid.get("columnCount"),
+                "frozen_rows": grid.get("frozenRowCount"),
+                "frozen_cols": grid.get("frozenColumnCount"),
+            }
+        )
+    return {
+        "id": s.get("spreadsheetId"),
+        "title": props.get("title"),
+        "locale": props.get("locale"),
+        "time_zone": props.get("timeZone"),
+        "url": s.get("spreadsheetUrl"),
+        "sheets": sheets_out,
+    }
+
+
 def trim_permission(p: dict[str, Any] | None) -> dict[str, Any]:
     p = p or {}
     return {

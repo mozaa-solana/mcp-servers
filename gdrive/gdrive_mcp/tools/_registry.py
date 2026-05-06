@@ -12,7 +12,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from ..config import Config
-from ..drive_client import build_service
+from ..drive_client import build_service, build_sheets_service
 
 mcp = FastMCP("gdrive")
 
@@ -24,10 +24,18 @@ def get_config() -> Config:
 
 @lru_cache(maxsize=1)
 def get_service() -> Any:
+    """Drive v3 service client (lazy, cached)."""
     return build_service(get_config())
+
+
+@lru_cache(maxsize=1)
+def get_sheets_service() -> Any:
+    """Sheets v4 service client (lazy, cached)."""
+    return build_sheets_service(get_config())
 
 
 def reset_caches_for_tests() -> None:
     """Test hook — clear the lru_caches so monkey-patching takes effect."""
     get_config.cache_clear()
     get_service.cache_clear()
+    get_sheets_service.cache_clear()

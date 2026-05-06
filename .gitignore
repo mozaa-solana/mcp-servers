@@ -9,6 +9,12 @@ venv/
 .env
 .env.local
 *.key
+# Google service-account key files — NEVER commit
+*-service-account*.json
+*-mcp-drive*.json
+test-mcp-drive*.json
+**/sa-key*.json
+**/credentials*.json
 
 # OS
 .DS_Store

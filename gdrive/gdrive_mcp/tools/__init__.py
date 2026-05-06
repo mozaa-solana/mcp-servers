@@ -5,6 +5,7 @@ from . import (  # noqa: F401  — side-effect: registers tools
     files,
     permissions,
     revisions,
+    sheets,
 )
 from ._registry import mcp
 

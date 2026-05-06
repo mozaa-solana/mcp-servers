@@ -25,12 +25,22 @@ class DriveAPIError(RuntimeError):
         super().__init__(f"Drive API {status_code} {reason}: {body!r}")
 
 
-def build_service(config: Config) -> Any:
-    """Construct a Drive v3 service client from a Config."""
-    creds = service_account.Credentials.from_service_account_file(
+def _credentials(config: Config):
+    return service_account.Credentials.from_service_account_file(
         config.credentials_path, scopes=list(DRIVE_SCOPES)
     )
-    return build("drive", "v3", credentials=creds, cache_discovery=False)
+
+
+def build_service(config: Config) -> Any:
+    """Construct a Drive v3 service client from a Config."""
+    return build("drive", "v3", credentials=_credentials(config), cache_discovery=False)
+
+
+def build_sheets_service(config: Config) -> Any:
+    """Construct a Sheets v4 service client from a Config (same SA credentials)."""
+    return build(
+        "sheets", "v4", credentials=_credentials(config), cache_discovery=False
+    )
 
 
 def wrap_http_error(exc: HttpError) -> DriveAPIError:
