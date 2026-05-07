@@ -9,8 +9,8 @@ a single Service Account.
 | **Tools** | 42 — 21 Drive + 21 Sheets |
 | **Auth** | Service Account JSON key (no browser, no OAuth flow) |
 | **Scope** | Read + safe write. No permanent delete, no permission mutations, no cell formatting |
-| **Safety rail** | Optional `GDRIVE_WORKING_FOLDER_ID` confines all writes to one folder |
-| **Tests** | 161 unit tests, 100% offline (mocked googleapiclient) |
+| **Safety rails** | `GDRIVE_WORKING_FOLDER_ID` confines Drive writes to one folder; `GDRIVE_LOCAL_SANDBOX_DIR` confines local-disk reads/writes to one directory |
+| **Tests** | 186 unit tests, 100% offline (mocked googleapiclient) |
 | **Architecture** | Layered: `config / drive_client / normalize / safety / api / tools / tests` |
 
 ---
@@ -102,7 +102,8 @@ OAuth scopes used:
 |---|---|---|---|
 | `GOOGLE_APPLICATION_CREDENTIALS` | ✅ | — | Path to the SA JSON key. Standard Google env var. |
 | `GDRIVE_SERVICE_ACCOUNT_JSON` | — | — | Project-specific alias for the above. |
-| `GDRIVE_WORKING_FOLDER_ID` | — | — | **Safety rail** — see below. When set, every write tool refuses to mutate files outside this folder. |
+| `GDRIVE_WORKING_FOLDER_ID` | — | — | **Drive write rail** — see below. When set, every write tool refuses to mutate files outside this folder (or its descendants). |
+| `GDRIVE_LOCAL_SANDBOX_DIR` | — | — | **Local-disk rail.** When set, `drive_upload_file` and `drive_export_file` reject paths that resolve outside this directory (path-traversal protection — symlinks resolved via `realpath`). |
 | `GDRIVE_DEFAULT_PAGE_SIZE` | — | `100` | Default page size for Drive list calls. |
 
 Config is loaded **lazily** on the first tool call, so importing the
@@ -181,16 +182,16 @@ Drive file id — find it via `drive_search` / `drive_list_files`.
 | Tool | Purpose |
 |---|---|
 | `sheets_get_metadata(spreadsheet_id)` | Title, locale, time zone, list of tabs (sheet ids, titles, dimensions). **Run first** — agents need tab titles to build A1 ranges. |
-| `sheets_get_values(spreadsheet_id, range, value_render?, major_dimension?)` | Read a range. `value_render`: `FORMATTED_VALUE` (default), `UNFORMATTED_VALUE`, `FORMULA`. |
+| `sheets_get_values(spreadsheet_id, cell_range, value_render?, major_dimension?)` | Read a range. `value_render`: `FORMATTED_VALUE` (default), `UNFORMATTED_VALUE`, `FORMULA`. |
 | `sheets_batch_get_values(spreadsheet_id, ranges[])` | Multi-range read in one call. Cheaper than N individual gets. |
 
 #### Write — values
 
 | Tool | Purpose |
 |---|---|
-| `sheets_update_values(spreadsheet_id, range, values[][], value_input?)` | **Overwrite**. `value_input`: `USER_ENTERED` (default — formulas/dates parsed) or `RAW`. |
-| `sheets_append_values(spreadsheet_id, range, values[][])` | Append rows after the last row of data. |
-| `sheets_clear_values(spreadsheet_id, range)` | Empty cells. Sheet structure unchanged. |
+| `sheets_update_values(spreadsheet_id, cell_range, values[][], value_input?)` | **Overwrite**. `value_input`: `USER_ENTERED` (default — formulas/dates parsed) or `RAW`. |
+| `sheets_append_values(spreadsheet_id, cell_range, values[][])` | Append rows after the last row of data. |
+| `sheets_clear_values(spreadsheet_id, cell_range)` | Empty cells. Sheet structure unchanged. |
 | `sheets_batch_update_values(spreadsheet_id, data[])` | Multi-range overwrite. `data` = `[{"range": ..., "values": [[...]]}]`. |
 | `sheets_find_replace(spreadsheet_id, find, replace, sheet_id?, match_case?, match_entire_cell?)` | Find/replace text. Scope: a single tab (`sheet_id`) or all tabs. |
 
@@ -321,7 +322,11 @@ personal Gmail context. This affects file *creation* only:
 → Practical setup: get a Workspace admin to share a folder with you;
 re-share with the SA. New files live in the org's quota.
 
-### Safety rail (`GDRIVE_WORKING_FOLDER_ID`)
+### Safety rails
+
+Two independent rails. Both are no-ops when their env var is unset.
+
+#### Drive write rail (`GDRIVE_WORKING_FOLDER_ID`)
 
 When set, **every write tool** refuses to act outside the configured
 folder (or its descendants):
@@ -329,22 +334,48 @@ folder (or its descendants):
 - `drive_create_folder` / `drive_upload_file` / `drive_create_text_file`
   / `sheets_create_spreadsheet` **require** `parent_id` and verify it.
 - `drive_rename_file` / `drive_move_file` / `drive_trash_file` /
-  `drive_update_file_content` walk the file's parent chain.
+  `drive_untrash_file` / `drive_update_file_content` / `drive_copy_file`
+  walk the file's parent chain.
 - All **Sheets writes** (values + structure) walk the spreadsheet's
   parent chain — the spreadsheet itself must live inside the rail.
 - **Read tools are unaffected** — read is always safe.
 
-```bash
-# Lock the agent to a single working folder while you're learning the model
-GDRIVE_WORKING_FOLDER_ID=1abc...xyz
+Implementation: `gdrive_mcp/safety.py::assert_in_working_folder` does a
+**BFS over all parents** at every node (Drive permits multiple parents
+within a Shared Drive), short-circuiting as soon as any path reaches
+the rail folder. Rejected calls return `{"error": ..., "violation":
+"working_folder"}`.
 
-# Unset to allow writes anywhere the SA has Editor access
-unset GDRIVE_WORKING_FOLDER_ID
+```bash
+GDRIVE_WORKING_FOLDER_ID=1abc...xyz   # lock to a single folder
+unset GDRIVE_WORKING_FOLDER_ID        # allow writes anywhere SA has Editor
 ```
 
-Implementation: `gdrive_mcp/safety.py` walks `parents[0]` via
-`files.get(fields=parents)` until it reaches the rail folder or
-exhausts the chain.
+#### Local-disk rail (`GDRIVE_LOCAL_SANDBOX_DIR`)
+
+When set, `drive_upload_file` and `drive_export_file` reject local paths
+that resolve outside the configured directory — defends against an agent
+or malicious MCP client trying to read/write `~/.ssh/authorized_keys`,
+`/etc/cron.d/...`, or anywhere else the SA process has access. Symlinks
+are resolved via `os.path.realpath` so escapes via symlinks are caught.
+Rejected calls return `{"error": ..., "violation": "local_sandbox"}`.
+
+```bash
+GDRIVE_LOCAL_SANDBOX_DIR=/var/agent-workspace
+```
+
+#### Error response shape
+
+All caught errors return a structured dict instead of raising:
+
+```json
+{ "error": "<message>", "status_code": 404 }                       // upstream Drive error
+{ "error": "...", "violation": "working_folder" }                  // Drive rail
+{ "error": "...", "violation": "local_sandbox" }                   // local rail
+```
+
+`HttpError` (404 / 403 / 429 / 500) gets wrapped automatically — the
+MCP client never sees a raw Python traceback.
 
 ### Sheets value semantics
 
@@ -373,7 +404,7 @@ gdrive/
 │       ├── _registry.py               ← FastMCP singleton + lazy get_config / get_service / get_sheets_service
 │       ├── about.py    files.py    content.py
 │       └── revisions.py    permissions.py    sheets.py
-└── tests/                             ← 161 unit tests, fully offline
+└── tests/                             ← 186 unit tests, fully offline
 ```
 
 **Layering rules** (enforced by import direction):
@@ -395,7 +426,7 @@ the MCP event loop stays responsive.
 ## Tests
 
 ```bash
-.venv/bin/pytest -q          # 161 tests, ~1s
+.venv/bin/pytest -q          # 186 tests, ~1s
 ```
 
 100% offline. The conftest builds two `MagicMock` services (Drive +

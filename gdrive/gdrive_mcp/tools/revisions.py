@@ -14,13 +14,14 @@ from ..normalize import (
     paginated,
     trim_revision,
 )
-from ._registry import get_service, mcp
+from ._registry import get_service, handle_drive_errors, mcp
 
 
 MAX_INLINE_BYTES = 1_000_000
 
 
 @mcp.tool()
+@handle_drive_errors
 async def drive_list_revisions(
     file_id: str, max_results: int = 50, cursor: str | None = None
 ) -> dict[str, Any]:
@@ -41,6 +42,7 @@ async def drive_list_revisions(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def drive_get_revision(
     file_id: str, revision_id: str, export_mime: str | None = None
 ) -> dict[str, Any]:

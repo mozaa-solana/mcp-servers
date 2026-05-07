@@ -5,6 +5,7 @@ conversion) rather than downloaded. Regular files are downloaded as bytes.
 """
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from googleapiclient.http import MediaFileUpload, MediaInMemoryUpload
@@ -30,11 +31,7 @@ def upload_file(
     parent_id: str | None = None,
     mime_type: str | None = None,
 ) -> dict[str, Any]:
-    body: dict[str, Any] = {"name": name} if name else {}
-    if not body.get("name"):
-        import os
-
-        body["name"] = os.path.basename(local_path)
+    body: dict[str, Any] = {"name": name or os.path.basename(local_path)}
     if parent_id:
         body["parents"] = [parent_id]
     media = MediaFileUpload(local_path, mimetype=mime_type, resumable=False)

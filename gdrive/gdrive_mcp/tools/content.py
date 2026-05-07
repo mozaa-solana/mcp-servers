@@ -13,8 +13,8 @@ from ..normalize import (
     is_text_like,
     trim_file,
 )
-from ..safety import assert_in_working_folder
-from ._registry import get_config, get_service, mcp
+from ..safety import assert_in_local_sandbox, assert_in_working_folder
+from ._registry import get_config, get_service, handle_drive_errors, mcp
 
 
 MAX_INLINE_BYTES = 1_000_000  # 1 MB cap on inline text returned to the LLM
@@ -29,10 +29,16 @@ def _decode(b: bytes) -> str:
 
 
 def _truncate(text: str) -> tuple[str, bool]:
-    if len(text.encode("utf-8")) <= MAX_INLINE_BYTES:
+    """Cap *text* at MAX_INLINE_BYTES **bytes** (not characters).
+
+    Naive ``text[:N]`` would slice by codepoint and overshoot for multi-byte
+    text (CJK, emoji) by up to 4× — encode → slice → decode handles utf-8
+    boundaries safely via ``errors="ignore"``.
+    """
+    encoded = text.encode("utf-8")
+    if len(encoded) <= MAX_INLINE_BYTES:
         return text, False
-    # rough cut to keep us near the byte limit
-    return text[:MAX_INLINE_BYTES], True
+    return encoded[:MAX_INLINE_BYTES].decode("utf-8", errors="ignore"), True
 
 
 # --------------------------------------------------------------------------
@@ -41,6 +47,7 @@ def _truncate(text: str) -> tuple[str, bool]:
 
 
 @mcp.tool()
+@handle_drive_errors
 async def drive_get_content(
     file_id: str, export_mime: str | None = None
 ) -> dict[str, Any]:
@@ -105,6 +112,7 @@ async def drive_get_content(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def drive_export_file(
     file_id: str, export_mime: str, local_path: str
 ) -> dict[str, Any]:
@@ -113,6 +121,10 @@ async def drive_export_file(
     For Google Docs use e.g. `application/pdf`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document`,
     `text/markdown`. For Sheets: `text/csv`, `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`.
     """
+    cfg = get_config()
+    # Reject path-traversal early — before we spend an API call.
+    assert_in_local_sandbox(cfg.local_sandbox_dir, local_path)
+
     svc = get_service()
     meta = await asyncio.to_thread(files_api.get_metadata, svc, file_id=file_id)
 
@@ -148,6 +160,7 @@ def _write_bytes(path: str, data: bytes) -> None:
 
 
 @mcp.tool()
+@handle_drive_errors
 async def drive_upload_file(
     local_path: str,
     name: str | None = None,
@@ -160,11 +173,14 @@ async def drive_upload_file(
     by googleapiclient if omitted. The destination parent must lie inside the
     working folder when the safety rail is enabled.
     """
+    cfg = get_config()
+    # Reject path-traversal before opening the file.
+    assert_in_local_sandbox(cfg.local_sandbox_dir, local_path)
+
     if not os.path.isfile(local_path):
         return {"error": f"local file not found: {local_path}"}
 
     svc = get_service()
-    cfg = get_config()
     if parent_id:
         await asyncio.to_thread(
             assert_in_working_folder, svc, cfg.working_folder_id, parent_id
@@ -189,6 +205,7 @@ async def drive_upload_file(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def drive_create_text_file(
     name: str,
     content: str,
@@ -226,6 +243,7 @@ async def drive_create_text_file(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def drive_update_file_content(
     file_id: str, content: str, mime_type: str = "text/plain"
 ) -> dict[str, Any]:

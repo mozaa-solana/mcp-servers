@@ -52,6 +52,36 @@ class TestConfig:
         )
         assert cfg.working_folder_id is None
 
+    def test_local_sandbox_dir_loaded(self, tmp_path):
+        key = tmp_path / "sa.json"
+        key.write_text("{}")
+        sandbox = tmp_path / "sandbox"
+        sandbox.mkdir()
+        cfg = Config.from_env(
+            {
+                "GOOGLE_APPLICATION_CREDENTIALS": str(key),
+                "GDRIVE_LOCAL_SANDBOX_DIR": str(sandbox),
+            }
+        )
+        assert cfg.local_sandbox_dir == str(sandbox)
+
+    def test_local_sandbox_dir_must_exist(self, tmp_path):
+        key = tmp_path / "sa.json"
+        key.write_text("{}")
+        with pytest.raises(ConfigError):
+            Config.from_env(
+                {
+                    "GOOGLE_APPLICATION_CREDENTIALS": str(key),
+                    "GDRIVE_LOCAL_SANDBOX_DIR": str(tmp_path / "missing"),
+                }
+            )
+
+    def test_local_sandbox_dir_unset_by_default(self, tmp_path):
+        key = tmp_path / "sa.json"
+        key.write_text("{}")
+        cfg = Config.from_env({"GOOGLE_APPLICATION_CREDENTIALS": str(key)})
+        assert cfg.local_sandbox_dir is None
+
     def test_invalid_page_size_raises(self, tmp_path):
         key = tmp_path / "sa.json"
         key.write_text("{}")
