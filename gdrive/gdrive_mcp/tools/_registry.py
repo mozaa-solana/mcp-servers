@@ -6,15 +6,57 @@ only runs on the first tool call (and is cached afterwards).
 """
 from __future__ import annotations
 
-from functools import lru_cache
-from typing import Any
+from functools import lru_cache, wraps
+from typing import Any, Awaitable, Callable
 
+from googleapiclient.errors import HttpError
 from mcp.server.fastmcp import FastMCP
 
 from ..config import Config
-from ..drive_client import build_service, build_sheets_service
+from ..drive_client import DriveAPIError, build_service, build_sheets_service, wrap_http_error
+from ..safety import LocalPathViolation, SafetyViolation
 
 mcp = FastMCP("gdrive")
+
+
+def handle_drive_errors(
+    fn: Callable[..., Awaitable[dict[str, Any]]],
+) -> Callable[..., Awaitable[dict[str, Any]]]:
+    """Decorator: convert known errors into the standard ``{"error": ...}`` MCP
+    response so the agent gets a clean message instead of a raw traceback.
+
+    Catches:
+      - :class:`googleapiclient.errors.HttpError` → preserves HTTP status code.
+      - :class:`DriveAPIError` (already wrapped at the api/* layer if used).
+      - :class:`SafetyViolation` (working-folder rail).
+      - :class:`LocalPathViolation` (local sandbox rail).
+
+    Anything else (e.g. ``OSError``, ``ValueError`` from agent input) is left
+    to propagate — those are bugs that should surface during testing, not
+    runtime concerns to swallow.
+    """
+
+    @wraps(fn)
+    async def wrapper(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        try:
+            return await fn(*args, **kwargs)
+        except HttpError as exc:
+            wrapped = wrap_http_error(exc)
+            return {
+                "error": str(wrapped.body) or wrapped.reason or "Drive API error",
+                "status_code": wrapped.status_code,
+            }
+        except DriveAPIError as exc:
+            return {
+                "error": str(exc.body) or exc.reason or "Drive API error",
+                "status_code": exc.status_code,
+            }
+        except SafetyViolation as exc:
+            return {"error": str(exc), "violation": "working_folder"}
+        except LocalPathViolation as exc:
+            return {"error": str(exc), "violation": "local_sandbox"}
+
+    return wrapper
 
 
 @lru_cache(maxsize=1)

@@ -15,7 +15,7 @@ from typing import Any
 from ..api import sheets as api
 from ..normalize import trim_file, trim_spreadsheet
 from ..safety import assert_in_working_folder
-from ._registry import get_config, get_service, get_sheets_service, mcp
+from ._registry import get_config, get_service, get_sheets_service, handle_drive_errors, mcp
 
 
 async def _check_safety(spreadsheet_id: str) -> None:
@@ -38,6 +38,7 @@ async def _check_safety(spreadsheet_id: str) -> None:
 
 
 @mcp.tool()
+@handle_drive_errors
 async def sheets_get_metadata(spreadsheet_id: str) -> dict[str, Any]:
     """Get spreadsheet metadata: title, locale, time zone, list of tabs
     (with sheet ids, titles, dimensions).
@@ -52,16 +53,17 @@ async def sheets_get_metadata(spreadsheet_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+@handle_drive_errors
 async def sheets_get_values(
     spreadsheet_id: str,
-    range: str,
+    cell_range: str,
     value_render: str = "FORMATTED_VALUE",
     major_dimension: str = "ROWS",
 ) -> dict[str, Any]:
     """Read a cell range as a 2-D list.
 
     Args:
-        range: A1 notation. Example: ``Sheet1!A1:C10`` or ``'My Sheet'!A:B``.
+        cell_range: A1 notation. Example: ``Sheet1!A1:C10`` or ``'My Sheet'!A:B``.
         value_render: ``FORMATTED_VALUE`` (default — what users see),
             ``UNFORMATTED_VALUE`` (raw values, dates as serial numbers),
             ``FORMULA`` (formulas instead of computed values).
@@ -71,7 +73,7 @@ async def sheets_get_values(
         api.get_values,
         get_sheets_service(),
         spreadsheet_id=spreadsheet_id,
-        range_=range,
+        range_=cell_range,
         value_render=value_render,
         major_dim=major_dimension,
     )
@@ -84,6 +86,7 @@ async def sheets_get_values(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def sheets_batch_get_values(
     spreadsheet_id: str,
     ranges: list[str],
@@ -119,9 +122,10 @@ async def sheets_batch_get_values(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def sheets_update_values(
     spreadsheet_id: str,
-    range: str,
+    cell_range: str,
     values: list[list[Any]],
     value_input: str = "USER_ENTERED",
 ) -> dict[str, Any]:
@@ -139,7 +143,7 @@ async def sheets_update_values(
         api.update_values,
         get_sheets_service(),
         spreadsheet_id=spreadsheet_id,
-        range_=range,
+        range_=cell_range,
         values=values,
         value_input=value_input,
     )
@@ -153,9 +157,10 @@ async def sheets_update_values(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def sheets_append_values(
     spreadsheet_id: str,
-    range: str,
+    cell_range: str,
     values: list[list[Any]],
     value_input: str = "USER_ENTERED",
 ) -> dict[str, Any]:
@@ -172,7 +177,7 @@ async def sheets_append_values(
         api.append_values,
         get_sheets_service(),
         spreadsheet_id=spreadsheet_id,
-        range_=range,
+        range_=cell_range,
         values=values,
         value_input=value_input,
     )
@@ -186,13 +191,14 @@ async def sheets_append_values(
 
 
 @mcp.tool()
-async def sheets_clear_values(spreadsheet_id: str, range: str) -> dict[str, Any]:
+@handle_drive_errors
+async def sheets_clear_values(spreadsheet_id: str, cell_range: str) -> dict[str, Any]:
     """Clear (empty) cells in a range. Formulas referencing those cells will
     recompute as empty. Sheet structure (rows/cols) unchanged.
     """
     await _check_safety(spreadsheet_id)
     data = await asyncio.to_thread(
-        api.clear_values, get_sheets_service(), spreadsheet_id=spreadsheet_id, range_=range
+        api.clear_values, get_sheets_service(), spreadsheet_id=spreadsheet_id, range_=cell_range
     )
     return {
         "spreadsheet_id": spreadsheet_id,
@@ -201,6 +207,7 @@ async def sheets_clear_values(spreadsheet_id: str, range: str) -> dict[str, Any]
 
 
 @mcp.tool()
+@handle_drive_errors
 async def sheets_batch_update_values(
     spreadsheet_id: str,
     data: list[dict[str, Any]],
@@ -240,6 +247,7 @@ async def sheets_batch_update_values(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def sheets_create_spreadsheet(
     title: str, parent_id: str | None = None
 ) -> dict[str, Any]:
@@ -268,6 +276,7 @@ async def sheets_create_spreadsheet(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def sheets_add_sheet(spreadsheet_id: str, title: str) -> dict[str, Any]:
     """Add a new tab to an existing spreadsheet."""
     await _check_safety(spreadsheet_id)
@@ -287,6 +296,7 @@ async def sheets_add_sheet(spreadsheet_id: str, title: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+@handle_drive_errors
 async def sheets_delete_sheet(spreadsheet_id: str, sheet_id: int) -> dict[str, Any]:
     """Delete a tab. **Irreversible** — Drive does NOT keep deleted tabs in
     spreadsheet revision history reliably. Double-check before calling.
@@ -302,6 +312,7 @@ async def sheets_delete_sheet(spreadsheet_id: str, sheet_id: int) -> dict[str, A
 
 
 @mcp.tool()
+@handle_drive_errors
 async def sheets_rename_sheet(
     spreadsheet_id: str, sheet_id: int, new_title: str
 ) -> dict[str, Any]:
@@ -328,6 +339,7 @@ async def sheets_rename_sheet(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def sheets_find_replace(
     spreadsheet_id: str,
     find: str,
@@ -363,6 +375,7 @@ async def sheets_find_replace(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def sheets_insert_rows(
     spreadsheet_id: str, sheet_id: int, start_index: int, count: int = 1
 ) -> dict[str, Any]:
@@ -393,6 +406,7 @@ async def sheets_insert_rows(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def sheets_delete_rows(
     spreadsheet_id: str, sheet_id: int, start_index: int, count: int = 1
 ) -> dict[str, Any]:
@@ -421,6 +435,7 @@ async def sheets_delete_rows(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def sheets_insert_cols(
     spreadsheet_id: str, sheet_id: int, start_index: int, count: int = 1
 ) -> dict[str, Any]:
@@ -449,6 +464,7 @@ async def sheets_insert_cols(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def sheets_delete_cols(
     spreadsheet_id: str, sheet_id: int, start_index: int, count: int = 1
 ) -> dict[str, Any]:
@@ -474,6 +490,7 @@ async def sheets_delete_cols(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def sheets_sort_range(
     spreadsheet_id: str,
     sheet_id: int,
@@ -514,6 +531,7 @@ async def sheets_sort_range(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def sheets_copy_sheet_to_spreadsheet(
     source_spreadsheet_id: str,
     source_sheet_id: int,
@@ -551,6 +569,7 @@ async def sheets_copy_sheet_to_spreadsheet(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def sheets_freeze(
     spreadsheet_id: str, sheet_id: int, rows: int = 0, cols: int = 0
 ) -> dict[str, Any]:
@@ -576,6 +595,7 @@ async def sheets_freeze(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def sheets_merge_cells(
     spreadsheet_id: str,
     sheet_id: int,
@@ -633,6 +653,7 @@ async def sheets_merge_cells(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def sheets_duplicate_sheet(
     spreadsheet_id: str, sheet_id: int, new_title: str | None = None
 ) -> dict[str, Any]:

@@ -6,10 +6,11 @@ from typing import Any
 
 from ..api import permissions as perm_api
 from ..normalize import paginated, trim_permission
-from ._registry import get_service, mcp
+from ._registry import get_service, handle_drive_errors, mcp
 
 
 @mcp.tool()
+@handle_drive_errors
 async def drive_list_permissions(
     file_id: str, cursor: str | None = None
 ) -> dict[str, Any]:
