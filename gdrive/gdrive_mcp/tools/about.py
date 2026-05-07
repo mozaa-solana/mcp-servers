@@ -5,6 +5,7 @@ import asyncio
 from typing import Any
 
 from ..api import about as about_api
+from ..api import drives as drives_api
 from ..api import files as files_api
 from ..normalize import clamp, paginated, trim_file
 from ._registry import get_service, mcp
@@ -54,3 +55,30 @@ async def drive_list_shared_with_me(
     )
     files = data.get("files") or []
     return paginated(data, (trim_file(f) for f in files), item_key="files")
+
+
+@mcp.tool()
+async def drive_list_drives(
+    max_results: int = 50, cursor: str | None = None
+) -> dict[str, Any]:
+    """List Shared Drives the service account is a member of.
+
+    Empty list is normal on personal Gmail (Shared Drives are a Workspace
+    feature). Use this to discover drive ids whose quota the SA can write
+    into — sidesteps the personal-Gmail quota gotcha.
+    """
+    n = clamp(max_results, 1, 100)
+    data = await asyncio.to_thread(
+        drives_api.list_drives, get_service(), page_size=n, page_token=cursor
+    )
+    drives = data.get("drives") or []
+    trimmed = [
+        {
+            "id": d.get("id"),
+            "name": d.get("name"),
+            "created": d.get("createdTime"),
+            "hidden": d.get("hidden", False),
+        }
+        for d in drives
+    ]
+    return paginated(data, trimmed, item_key="drives")

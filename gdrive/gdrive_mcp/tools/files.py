@@ -198,3 +198,43 @@ async def drive_trash_file(file_id: str) -> dict[str, Any]:
     )
     data = await asyncio.to_thread(files_api.trash, svc, file_id=file_id)
     return trim_file(data)
+
+
+@mcp.tool()
+async def drive_untrash_file(file_id: str) -> dict[str, Any]:
+    """Restore a file from Trash. Pair with `drive_trash_file`."""
+    svc = get_service()
+    cfg = get_config()
+    await asyncio.to_thread(
+        assert_in_working_folder, svc, cfg.working_folder_id, file_id
+    )
+    data = await asyncio.to_thread(files_api.untrash, svc, file_id=file_id)
+    return trim_file(data)
+
+
+@mcp.tool()
+async def drive_copy_file(
+    file_id: str, new_name: str | None = None, parent_id: str | None = None
+) -> dict[str, Any]:
+    """Duplicate a file. Common pattern: "make a copy from this template".
+
+    `new_name` defaults to "Copy of <orig>". `parent_id` defaults to the same
+    folder as the source. The destination must lie inside the working folder
+    when the safety rail is enabled.
+    """
+    svc = get_service()
+    cfg = get_config()
+    if parent_id:
+        await asyncio.to_thread(
+            assert_in_working_folder, svc, cfg.working_folder_id, parent_id
+        )
+    elif cfg.working_folder_id:
+        # No explicit parent → would inherit source's parent. Verify the
+        # source sits inside the rail (its parents will be inherited).
+        await asyncio.to_thread(
+            assert_in_working_folder, svc, cfg.working_folder_id, file_id
+        )
+    data = await asyncio.to_thread(
+        files_api.copy_file, svc, file_id=file_id, name=new_name, parent_id=parent_id
+    )
+    return trim_file(data)

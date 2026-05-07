@@ -7,6 +7,7 @@ from gdrive_mcp.normalize import GOOGLE_FOLDER
 from gdrive_mcp.safety import SafetyViolation
 from gdrive_mcp.tools import files as tools
 from tests.conftest import (
+    program_files_copy,
     program_files_create,
     program_files_get,
     program_files_list,
@@ -154,3 +155,49 @@ class TestRenameMoveTrash:
         program_files_update(svc, {"id": "F", "name": "g", "trashed": True})
         out = await tools.drive_trash_file("F")
         assert out["trashed"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+class TestUntrash:
+    async def test_returns_restored_file(self, svc):
+        program_files_update(svc, {"id": "F", "name": "g", "trashed": False})
+        out = await tools.drive_untrash_file("F")
+        assert out["trashed"] is False
+
+    async def test_safety_rail_blocks(self, svc_with_safety):
+        svc, _ = svc_with_safety
+        program_files_get(svc, {"parents": []})
+        with pytest.raises(SafetyViolation):
+            await tools.drive_untrash_file("F")
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+class TestCopyFile:
+    async def test_copy_with_new_name_and_parent(self, svc):
+        program_files_copy(
+            svc, {"id": "NEW", "name": "copy.md", "mimeType": "text/markdown"}
+        )
+        out = await tools.drive_copy_file("F", new_name="copy.md", parent_id="P")
+        assert out["id"] == "NEW"
+        kwargs = svc.files.return_value.copy.call_args.kwargs
+        assert kwargs["body"] == {"name": "copy.md", "parents": ["P"]}
+
+    async def test_copy_minimal(self, svc):
+        program_files_copy(svc, {"id": "NEW", "name": "c", "mimeType": "text/plain"})
+        await tools.drive_copy_file("F")
+        kwargs = svc.files.return_value.copy.call_args.kwargs
+        assert kwargs["body"] == {}
+
+    async def test_safety_rail_checks_parent_when_given(self, svc_with_safety):
+        svc, _ = svc_with_safety
+        program_files_get(svc, {"parents": []})  # parent outside rail
+        with pytest.raises(SafetyViolation):
+            await tools.drive_copy_file("F", parent_id="OUTSIDE")
+
+    async def test_safety_rail_checks_source_when_no_parent(self, svc_with_safety):
+        svc, _ = svc_with_safety
+        program_files_get(svc, {"parents": []})  # source outside rail
+        with pytest.raises(SafetyViolation):
+            await tools.drive_copy_file("F")

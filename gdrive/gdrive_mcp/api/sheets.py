@@ -187,6 +187,214 @@ def batch_update_structure(
 SPREADSHEET_MIME = "application/vnd.google-apps.spreadsheet"
 
 
+def copy_sheet_to(
+    svc: Any,
+    *,
+    source_spreadsheet_id: str,
+    source_sheet_id: int,
+    destination_spreadsheet_id: str,
+) -> dict[str, Any]:
+    """``spreadsheets.sheets.copyTo`` — copy a tab into a *different* spreadsheet.
+
+    Returns the new sheet's properties (sheetId, title, index) inside the
+    destination spreadsheet. The source remains unchanged.
+    """
+    return (
+        svc.spreadsheets()
+        .sheets()
+        .copyTo(
+            spreadsheetId=source_spreadsheet_id,
+            sheetId=int(source_sheet_id),
+            body={"destinationSpreadsheetId": destination_spreadsheet_id},
+        )
+        .execute()
+    )
+
+
+# --- Convenience wrappers around batch_update_structure ---
+
+def find_replace(
+    svc: Any,
+    *,
+    spreadsheet_id: str,
+    find: str,
+    replace: str,
+    sheet_id: int | None = None,
+    match_case: bool = False,
+    match_entire_cell: bool = False,
+) -> dict[str, Any]:
+    """findReplace request. Scope: a single sheet (``sheet_id``) or all sheets."""
+    req: dict[str, Any] = {
+        "findReplace": {
+            "find": find,
+            "replacement": replace,
+            "matchCase": match_case,
+            "matchEntireCell": match_entire_cell,
+        }
+    }
+    if sheet_id is not None:
+        req["findReplace"]["sheetId"] = int(sheet_id)
+    else:
+        req["findReplace"]["allSheets"] = True
+    return batch_update_structure(svc, spreadsheet_id=spreadsheet_id, requests=[req])
+
+
+def insert_dimension(
+    svc: Any,
+    *,
+    spreadsheet_id: str,
+    sheet_id: int,
+    dimension: str,  # "ROWS" | "COLUMNS"
+    start_index: int,
+    count: int,
+) -> dict[str, Any]:
+    """insertDimension — insert *count* blank rows/cols starting at *start_index* (0-based)."""
+    req = {
+        "insertDimension": {
+            "range": {
+                "sheetId": int(sheet_id),
+                "dimension": dimension,
+                "startIndex": int(start_index),
+                "endIndex": int(start_index) + int(count),
+            },
+            "inheritFromBefore": False,
+        }
+    }
+    return batch_update_structure(svc, spreadsheet_id=spreadsheet_id, requests=[req])
+
+
+def delete_dimension(
+    svc: Any,
+    *,
+    spreadsheet_id: str,
+    sheet_id: int,
+    dimension: str,
+    start_index: int,
+    count: int,
+) -> dict[str, Any]:
+    """deleteDimension — remove *count* rows/cols starting at *start_index* (0-based)."""
+    req = {
+        "deleteDimension": {
+            "range": {
+                "sheetId": int(sheet_id),
+                "dimension": dimension,
+                "startIndex": int(start_index),
+                "endIndex": int(start_index) + int(count),
+            }
+        }
+    }
+    return batch_update_structure(svc, spreadsheet_id=spreadsheet_id, requests=[req])
+
+
+def sort_range(
+    svc: Any,
+    *,
+    spreadsheet_id: str,
+    sheet_id: int,
+    start_row_index: int,
+    end_row_index: int,
+    start_column_index: int,
+    end_column_index: int,
+    sort_column_index: int,
+    descending: bool = False,
+) -> dict[str, Any]:
+    """sortRange — sort cells within a GridRange by one column."""
+    req = {
+        "sortRange": {
+            "range": {
+                "sheetId": int(sheet_id),
+                "startRowIndex": int(start_row_index),
+                "endRowIndex": int(end_row_index),
+                "startColumnIndex": int(start_column_index),
+                "endColumnIndex": int(end_column_index),
+            },
+            "sortSpecs": [
+                {
+                    "dimensionIndex": int(sort_column_index),
+                    "sortOrder": "DESCENDING" if descending else "ASCENDING",
+                }
+            ],
+        }
+    }
+    return batch_update_structure(svc, spreadsheet_id=spreadsheet_id, requests=[req])
+
+
+def freeze(
+    svc: Any,
+    *,
+    spreadsheet_id: str,
+    sheet_id: int,
+    rows: int = 0,
+    cols: int = 0,
+) -> dict[str, Any]:
+    """updateSheetProperties — freeze the first *rows* rows and *cols* columns."""
+    req = {
+        "updateSheetProperties": {
+            "properties": {
+                "sheetId": int(sheet_id),
+                "gridProperties": {
+                    "frozenRowCount": int(rows),
+                    "frozenColumnCount": int(cols),
+                },
+            },
+            "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount",
+        }
+    }
+    return batch_update_structure(svc, spreadsheet_id=spreadsheet_id, requests=[req])
+
+
+def merge_cells(
+    svc: Any,
+    *,
+    spreadsheet_id: str,
+    sheet_id: int,
+    start_row_index: int,
+    end_row_index: int,
+    start_column_index: int,
+    end_column_index: int,
+    merge_type: str = "MERGE_ALL",  # MERGE_ALL | MERGE_COLUMNS | MERGE_ROWS
+) -> dict[str, Any]:
+    """mergeCells — merge a GridRange according to *merge_type*."""
+    req = {
+        "mergeCells": {
+            "range": {
+                "sheetId": int(sheet_id),
+                "startRowIndex": int(start_row_index),
+                "endRowIndex": int(end_row_index),
+                "startColumnIndex": int(start_column_index),
+                "endColumnIndex": int(end_column_index),
+            },
+            "mergeType": merge_type,
+        }
+    }
+    return batch_update_structure(svc, spreadsheet_id=spreadsheet_id, requests=[req])
+
+
+def unmerge_cells(
+    svc: Any,
+    *,
+    spreadsheet_id: str,
+    sheet_id: int,
+    start_row_index: int,
+    end_row_index: int,
+    start_column_index: int,
+    end_column_index: int,
+) -> dict[str, Any]:
+    """unmergeCells — split any merged regions overlapping the GridRange."""
+    req = {
+        "unmergeCells": {
+            "range": {
+                "sheetId": int(sheet_id),
+                "startRowIndex": int(start_row_index),
+                "endRowIndex": int(end_row_index),
+                "startColumnIndex": int(start_column_index),
+                "endColumnIndex": int(end_column_index),
+            }
+        }
+    }
+    return batch_update_structure(svc, spreadsheet_id=spreadsheet_id, requests=[req])
+
+
 def create_via_drive(
     drive_svc: Any, *, title: str, parent_id: str | None = None
 ) -> dict[str, Any]:
