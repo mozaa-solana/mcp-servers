@@ -1,45 +1,25 @@
-# socialdata-mcp
+# socialdata MCP server
 
-Realtime Twitter/X data for MCP-aware agents (Claude CLI, opencode-go,
-goclaw bridge consumers), via the [socialdata.tools](https://socialdata.tools)
-REST API.
+Realtime Twitter/X **read-only** data for MCP agents, powered by [socialdata.tools](https://socialdata.tools).
 
-**Why this exists.** Tavily/Exa lag X by 6–24h — they index *articles
-about* tweets, not the tweets themselves. When an agent needs primary-source
-realtime social data, it calls these tools instead of `web_search`.
+**30 tools** covering every public socialdata endpoint: search, users, tweets, lists, communities, spaces, social-action verification.
 
-**30 tools** covering every public socialdata endpoint: search, users,
-tweets, lists, communities, spaces, social-action verification.
+> **Why this exists.** Tavily/Exa lag X by 6–24h — they index articles *about* tweets, not the tweets themselves. When an agent needs primary-source realtime social data, it calls these tools instead of `web_search`.
 
----
-
-## Table of contents
-
-- [Quick start](#quick-start)
-- [Configuration](#configuration)
-- [Architecture](#architecture)
-- [Tool reference](#tool-reference)
-- [Response shapes](#response-shapes)
-- [Tests](#tests)
-- [Goclaw integration](#goclaw-integration)
-- [Cost notes](#cost-notes)
+For authenticated **write** access (post, like, DM, follow), use the [xapi](../xapi/) server instead.
 
 ---
 
 ## Quick start
 
 ```bash
-# 1. Install
-git clone https://github.com/mozaa-solana/mcp-servers.git ~/mcp-servers
 cd ~/mcp-servers/socialdata
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-
-# 2. Run
-SOCIALDATA_API_KEY=<your-key> .venv/bin/python server.py
+SOCIALDATA_API_KEY=<key> .venv/bin/python server.py
 ```
 
-Smoke test the stdio handshake:
+Verify the handshake:
 
 ```bash
 SOCIALDATA_API_KEY=<key> .venv/bin/python server.py < <(cat <<'EOF'
@@ -49,6 +29,7 @@ SOCIALDATA_API_KEY=<key> .venv/bin/python server.py < <(cat <<'EOF'
 EOF
 )
 ```
+
 Expect 30 entries in the `tools/list` response.
 
 > **Locked-down distros** (Ubuntu 24.04+ without `python3-venv`):
@@ -58,127 +39,86 @@ Expect 30 entries in the `tools/list` response.
 
 ## Configuration
 
-| Env var | Required | Default | Notes |
+| Env var | Required | Default | Purpose |
 |---|---|---|---|
-| `SOCIALDATA_API_KEY` | ✅ | — | From the [socialdata.tools dashboard](https://socialdata.tools/app/dashboard) |
-| `SOCIALDATA_BASE_URL` | — | `https://api.socialdata.tools` | Override for staging / self-hosted gateway |
-| `SOCIALDATA_TIMEOUT` | — | `30` | HTTP timeout (seconds) |
+| `SOCIALDATA_API_KEY` | Yes | — | From the [socialdata.tools dashboard](https://socialdata.tools/app/dashboard) |
+| `SOCIALDATA_BASE_URL` | No | `https://api.socialdata.tools` | Override for staging / self-hosted gateway |
+| `SOCIALDATA_TIMEOUT` | No | `30` | HTTP timeout (seconds) |
 
-Config is loaded **lazily** — importing `socialdata_mcp` does not touch the
-environment. Validation runs the first time a tool is called (or via
-`server.py main()` at startup).
-
----
-
-## Architecture
-
-```
-socialdata/
-├── server.py                  ← MCP stdio entrypoint
-├── socialdata_mcp/
-│   ├── config.py              ← env → frozen Config dataclass (fail-fast)
-│   ├── http.py                ← httpx wrapper + SocialDataAPIError
-│   ├── normalize.py           ← pure trim_tweet / trim_user / clamp / paginated
-│   ├── api/                   ← 1 file per REST resource — returns raw JSON
-│   │   ├── search.py    users.py     tweets.py
-│   │   ├── lists.py     communities.py
-│   │   └── spaces.py    social_actions.py
-│   └── tools/                 ← 1 file per resource — @mcp.tool() wrappers
-│       ├── _registry.py       ← FastMCP singleton + lazy get_config()
-│       ├── search.py    users.py     tweets.py
-│       ├── lists.py     communities.py
-│       └── spaces.py    social_actions.py
-└── tests/                     ← 96 unit tests, fully offline
-```
-
-**Layering rules** (enforced by import direction):
-
-| Layer | Knows about | Talks to |
-|---|---|---|
-| `tools/*` | MCP, normalize | `api/*` |
-| `api/*` | REST shape | `http.py` |
-| `http.py` | httpx, errors | network |
-| `normalize.py` | pure data | nothing |
-| `config.py` | env vars | nothing |
-
-Tests patch `request_json` once in `conftest.py` → entire suite stays
-offline, no API key needed.
+Config is loaded **lazily** — importing `socialdata_mcp` does not touch the environment. Validation runs on the first tool call.
 
 ---
 
 ## Tool reference
 
-All paginated tools accept `cursor` and return `next_cursor`. Pass
-`next_cursor` back as `cursor=` to walk the next page.
+All paginated tools accept `cursor` and return `next_cursor`. Pass it back as `cursor=` to fetch the next page.
 
-`max_results` is clamped per tool (typically 1–50 for tweets, 1–100 for
-user lists). Set higher than the cap and you get the cap; set lower than
-1 and you get 1.
+`max_results` is clamped per tool (typically 1–50 for tweets, 1–100 for user lists). Values above the cap silently clamp; values below 1 default to 1.
 
-### 🔍 Search (1)
+### Search
 
-| Tool | Endpoint | Notes |
-|---|---|---|
-| `twitter_search(query, sort, max_results, cursor)` | `GET /twitter/search` | Operators: `from:`, `since:`, `until:`, `lang:`, `min_faves:`, `"phrase"`, `-exclude`. `sort=Latest` (default) or `Top`. |
-
-### 👤 Users (11)
-
-| Tool | Endpoint |
+| Tool | Description |
 |---|---|
-| `twitter_user_info(handle_or_id)` | `GET /twitter/user/{handle_or_id}` |
-| `twitter_users_lookup(ids[])` ≤100 | `POST /twitter/users-by-id` |
-| `twitter_user_extended_bio(screen_name)` | `GET /twitter/user/{u}/extended-bio` |
-| `twitter_user_tweets(user_id, include_replies, …)` | `GET /twitter/user/{id}/tweets[-and-replies]` |
-| `twitter_user_mentions(screen_name, …)` | `GET /twitter/user/{u}/mentions` |
-| `twitter_user_highlights(user_id, …)` | `GET /twitter/user/{id}/highlights` |
-| `twitter_user_followers(user_id, verified_only, …)` | `GET /twitter/followers/list` *or* `…/verified-followers` |
-| `twitter_user_followings(user_id, …)` | `GET /twitter/friends/list` |
-| `twitter_user_similar(user_id, …)` | `GET /twitter/user/{id}/similar` |
-| `twitter_user_affiliates(user_id, …)` | `GET /twitter/user/{id}/affiliates` |
-| `twitter_user_lists(user_id, …)` | `GET /twitter/user/{id}/lists` |
+| `twitter_search(query, sort, max_results, cursor)` | Operators: `from:`, `since:`, `until:`, `lang:`, `min_faves:`, `"phrase"`, `-exclude`. `sort=Latest` (default) or `Top`. |
 
-### 🐦 Tweets (7)
+### Users (11 tools)
 
-| Tool | Endpoint |
+| Tool | Description |
 |---|---|
-| `twitter_tweet(tweet_id)` | `GET /twitter/tweets/{id}` |
-| `twitter_tweets_lookup(ids[])` ≤100 | `POST /twitter/tweets-by-ids` |
-| `twitter_tweet_comments(tweet_id, …)` | `GET /twitter/tweets/{id}/comments` |
-| `twitter_tweet_quotes(tweet_id, …)` | `GET /twitter/tweets/{id}/quotes` |
-| `twitter_tweet_retweeters(tweet_id, …)` | `GET /twitter/tweets/{id}/retweeted_by` |
-| `twitter_tweet_thread(thread_id, …)` | `GET /twitter/thread/{id}` |
-| `twitter_tweet_article(article_id)` | `GET /twitter/article/{id}` |
+| `twitter_user_info(handle_or_id)` | Profile by `@handle` or numeric id |
+| `twitter_users_lookup(ids[])` | Batch lookup, up to 100 ids |
+| `twitter_user_extended_bio(screen_name)` | Full bio with links and entities |
+| `twitter_user_tweets(user_id, include_replies, max_results, cursor)` | User's tweets (optionally with replies) |
+| `twitter_user_mentions(screen_name, max_results, cursor)` | Tweets mentioning this user |
+| `twitter_user_highlights(user_id, max_results, cursor)` | Highlighted/pinned tweets |
+| `twitter_user_followers(user_id, verified_only, max_results, cursor)` | Followers list (or verified-only) |
+| `twitter_user_followings(user_id, max_results, cursor)` | Accounts this user follows |
+| `twitter_user_similar(user_id, max_results, cursor)` | Similar accounts |
+| `twitter_user_affiliates(user_id, max_results, cursor)` | Affiliated accounts |
+| `twitter_user_lists(user_id, max_results, cursor)` | Lists this user owns |
 
-### 📋 Lists (3)
+### Tweets (7 tools)
 
-| Tool | Endpoint |
+| Tool | Description |
 |---|---|
-| `twitter_list_info(list_id)` | `GET /twitter/lists/show` |
-| `twitter_list_members(list_id, …)` | `GET /twitter/lists/members` |
-| `twitter_list_tweets(list_id, …)` | `GET /twitter/list/{id}/tweets` |
+| `twitter_tweet(tweet_id)` | Single tweet by id |
+| `twitter_tweets_lookup(ids[])` | Batch lookup, up to 100 ids |
+| `twitter_tweet_comments(tweet_id, max_results, cursor)` | Replies to a tweet |
+| `twitter_tweet_quotes(tweet_id, max_results, cursor)` | Quote-tweets of a tweet |
+| `twitter_tweet_retweeters(tweet_id, max_results, cursor)` | Who retweeted |
+| `twitter_tweet_thread(thread_id, max_results, cursor)` | Full thread |
+| `twitter_tweet_article(article_id)` | Long-form article content |
 
-### 🏘️ Communities (4)
+### Lists (3 tools)
 
-| Tool | Endpoint |
+| Tool | Description |
 |---|---|
-| `twitter_community_info(community_id)` | `GET /twitter/community/{id}` |
-| `twitter_community_tweets(community_id, sort, …)` | `GET /twitter/community/{id}/tweets` |
-| `twitter_community_members(community_id, …)` | `GET /twitter/community/{id}/members` |
-| `twitter_community_search(community_id, query, sort, …)` | `GET /twitter/community/{id}/search` |
+| `twitter_list_info(list_id)` | List metadata |
+| `twitter_list_members(list_id, max_results, cursor)` | Members of a list |
+| `twitter_list_tweets(list_id, max_results, cursor)` | Tweets from a list |
 
-### 🎙️ Spaces (1)
+### Communities (4 tools)
 
-| Tool | Endpoint |
+| Tool | Description |
 |---|---|
-| `twitter_space_info(space_id)` | `GET /twitter/space/{id}` |
+| `twitter_community_info(community_id)` | Community metadata |
+| `twitter_community_tweets(community_id, sort, max_results, cursor)` | Posts in the community |
+| `twitter_community_members(community_id, max_results, cursor)` | Members list |
+| `twitter_community_search(community_id, query, sort, max_results, cursor)` | Search within a community |
 
-### ✅ Social actions — verification (3)
+### Spaces (1 tool)
 
-| Tool | Endpoint |
+| Tool | Description |
 |---|---|
-| `twitter_verify_following(source, target)` | `GET /twitter/user/{s}/following/{t}` |
-| `twitter_verify_retweeted(tweet_id, user_id)` | `GET /twitter/tweets/{t}/retweeted_by/{u}` |
-| `twitter_verify_commented(tweet_id, user_id)` | `GET /twitter/tweets/{t}/commented_by/{u}` |
+| `twitter_space_info(space_id)` | Space metadata |
+
+### Social actions — verification (3 tools)
+
+| Tool | Description |
+|---|---|
+| `twitter_verify_following(source, target)` | Does `source` follow `target`? |
+| `twitter_verify_retweeted(tweet_id, user_id)` | Did `user_id` retweet this? |
+| `twitter_verify_commented(tweet_id, user_id)` | Did `user_id` reply to this? |
 
 ---
 
@@ -225,52 +165,65 @@ user lists). Set higher than the cap and you get the cap; set lower than
 ```json
 {
   "count": 20,
-  "tweets": [ /* …trimmed tweets… */ ],
+  "tweets": [],
   "next_cursor": "PAAAAPAtPBwcFoCAsr..."
 }
 ```
-Pass `next_cursor` back as `cursor=` to fetch the next page. When
-`next_cursor` is `null`, you've reached the end.
 
-Raw socialdata payloads are dropped — agents get only the fields that
-matter for research/content generation.
+When `next_cursor` is `null`, you've reached the end.
+
+---
+
+## Architecture
+
+```
+socialdata/
+├── server.py                  MCP stdio entrypoint
+├── socialdata_mcp/
+│   ├── config.py              env → frozen Config dataclass (fail-fast)
+│   ├── http.py                httpx wrapper + SocialDataAPIError
+│   ├── normalize.py           pure trim_tweet / trim_user / clamp / paginated
+│   ├── api/                   1 file per REST resource — returns raw JSON
+│   │   ├── search.py    users.py     tweets.py
+│   │   ├── lists.py     communities.py
+│   │   └── spaces.py    social_actions.py
+│   └── tools/                 1 file per resource — @mcp.tool() wrappers
+│       ├── _registry.py       FastMCP singleton + lazy get_config()
+│       ├── search.py    users.py     tweets.py
+│       ├── lists.py     communities.py
+│       └── spaces.py    social_actions.py
+└── tests/                     96 unit tests, fully offline
+```
+
+Imports flow downward only:
+
+| Layer | Responsibility | Depends on |
+|---|---|---|
+| `tools/*` | LLM-facing contract — docstrings, validation, trimming | `api/*`, normalize |
+| `api/*` | REST endpoint wrappers | `http.py` |
+| `http.py` | HTTP transport + error mapping | Network |
+| `normalize.py` | Pure data transformations | Nothing |
+| `config.py` | Environment variable loading | Nothing |
 
 ---
 
 ## Tests
 
 ```bash
-.venv/bin/pytest -q          # 96 tests, ~0.4s
+.venv/bin/pytest -q                                        # 96 tests, ~0.4s
 .venv/bin/pytest --cov=socialdata_mcp --cov-report=term-missing
 ```
 
-The full suite is offline. `tests/conftest.py` patches
-`socialdata_mcp.http.request_json` with a scripted stub, so:
-- no `SOCIALDATA_API_KEY` needed
-- no network
-- tests are deterministic and fast
-
-Coverage:
-
-| Layer | What's tested |
-|---|---|
-| `config.py` | Env loading, validation, fail-fast |
-| `http.py` | URL building, JSON body, error mapping (4xx/5xx, non-JSON bodies) |
-| `normalize.py` | Field fall-backs, `clamp`, `extract_items`, pagination envelope |
-| `api/*` | Endpoint paths, query/JSON params, cursor passing |
-| `tools/*` | Normalization, clamping, input validation, error responses |
-| `_registry` | All 30 tools registered via `mcp.list_tools()` |
+Fully offline. `tests/conftest.py` patches `socialdata_mcp.http.request_json` with a scripted stub — no API key, no network, deterministic results.
 
 ---
 
 ## Goclaw integration
 
-Goclaw stores MCP servers in its DB and grants them per-agent.
-
 ```bash
 ADMIN_AUTH=(-H "Authorization: Bearer $GOCLAW_GATEWAY_TOKEN" -H "X-GoClaw-User-Id: admin")
 
-# 1. Register the server
+# Register
 SERVER_ID=$(curl -sS "${ADMIN_AUTH[@]}" -H "Content-Type: application/json" \
   -X POST http://localhost:18790/v1/mcp/servers \
   -d '{
@@ -285,21 +238,15 @@ SERVER_ID=$(curl -sS "${ADMIN_AUTH[@]}" -H "Content-Type: application/json" \
     "enabled": true
   }' | jq -r .id)
 
-# 2. Grant to an agent
+# Grant to an agent
 curl -sS "${ADMIN_AUTH[@]}" -H "Content-Type: application/json" \
   -X POST "http://localhost:18790/v1/mcp/servers/$SERVER_ID/grants/agent" \
   -d "{\"agent_id\":\"<agent-uuid>\",\"enabled\":true}"
 
-# 3. Reload (no full restart needed)
-curl -sS "${ADMIN_AUTH[@]}" \
-  -X POST "http://localhost:18790/v1/mcp/servers/$SERVER_ID/reconnect"
-
-# 4. Verify discovery — should list all 30 twitter_* tools
+# Verify discovery — should list all 30 twitter_* tools
 curl -sS "${ADMIN_AUTH[@]}" \
   "http://localhost:18790/v1/mcp/servers/$SERVER_ID/tools" | jq '.[].name'
 ```
-
-Only granted agents see the tools in their MCP discovery.
 
 ---
 
@@ -310,9 +257,6 @@ socialdata.tools meters **per request**, not per result.
 - Trim `max_results` to the smallest useful value
 - Use search operators (`since:`, `min_faves:`, `lang:`) to filter at source
 - Paginate only when you've exhausted the first page's signal
-- Cache aggressively at the agent layer — most research turns reuse the
-  same result set across multiple draft revisions
+- Cache aggressively at the agent layer — most research turns reuse the same result set across multiple draft revisions
 
-For freshness verification, combine `twitter_search` (primary tweet) with
-`web_search` (corroborating coverage) — two independent ingest paths
-reduce false-positive "this is fresh" calls on republished content.
+For freshness verification, combine `twitter_search` (primary tweet) with `web_search` (corroborating coverage) — two independent ingest paths reduce false-positive "this is fresh" calls on republished content.

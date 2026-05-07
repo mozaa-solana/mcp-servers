@@ -1,49 +1,23 @@
-# gdrive-mcp
+# gdrive MCP server
 
-MCP stdio server giving agents (Claude CLI, opencode-go, goclaw bridge
-consumers) access to **Google Drive v3** and **Google Sheets v4** through
-a single Service Account.
+**Google Drive v3 + Sheets v4** access for MCP agents through a single Service Account.
 
-| | |
-|---|---|
-| **Tools** | 42 — 21 Drive + 21 Sheets |
-| **Auth** | Service Account JSON key (no browser, no OAuth flow) |
-| **Scope** | Read + safe write. No permanent delete, no permission mutations, no cell formatting |
-| **Safety rails** | `GDRIVE_WORKING_FOLDER_ID` confines Drive writes to one folder; `GDRIVE_LOCAL_SANDBOX_DIR` confines local-disk reads/writes to one directory |
-| **Tests** | 186 unit tests, 100% offline (mocked googleapiclient) |
-| **Architecture** | Layered: `config / drive_client / normalize / safety / api / tools / tests` |
+42 tools: 21 Drive + 21 Sheets. No browser, no OAuth consent flow, no refresh tokens.
 
----
-
-## Table of contents
-
-- [Quick start](#quick-start)
-- [Setup](#setup)
-- [Configuration](#configuration)
-- [Tool reference](#tool-reference)
-- [Response shapes](#response-shapes)
-- [Concepts that bite](#concepts-that-bite)
-- [Architecture](#architecture)
-- [Tests](#tests)
-- [Goclaw integration](#goclaw-integration)
+> **Scope.** Read + safe write. No permanent delete, no permission mutations, no cell formatting.
 
 ---
 
 ## Quick start
 
 ```bash
-# 1. Install
-git clone https://github.com/mozaa-solana/mcp-servers.git ~/mcp-servers
 cd ~/mcp-servers/gdrive
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-
-# 2. Run (after completing Setup below)
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json \
-  .venv/bin/python server.py
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json .venv/bin/python server.py
 ```
 
-Smoke test the stdio handshake — should return 42 tools:
+Verify the handshake:
 
 ```bash
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json \
@@ -56,6 +30,8 @@ EOF
 )
 ```
 
+Expect 42 tools in the `tools/list` response.
+
 > **Locked-down distros** (Ubuntu 24.04+ without `python3-venv`):
 > `pip3 install --user --break-system-packages -r requirements.txt`
 
@@ -63,186 +39,154 @@ EOF
 
 ## Setup
 
-Service Account = a robot identity with its own email. It authenticates
-with a JSON private key — no browser, no OAuth consent flow, no refresh
-tokens.
-
 ### One-time GCP setup
 
-1. **Create a Google Cloud project** (skip if you already have one).
-2. **Enable both APIs** in that project:
-   - [Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com)
-   - [Sheets API](https://console.cloud.google.com/apis/library/sheets.googleapis.com)
-3. **Create a service account** in IAM & Admin → Service Accounts. Note its email — looks like `mcp-bot@my-project.iam.gserviceaccount.com`.
+1. **Create a Google Cloud project** (skip if you have one).
+2. **Enable both APIs**: [Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com) + [Sheets API](https://console.cloud.google.com/apis/library/sheets.googleapis.com).
+3. **Create a service account** in IAM & Admin → Service Accounts. Note its email (e.g. `mcp-bot@my-project.iam.gserviceaccount.com`).
 4. **Create a JSON key** for the SA → download the `.json` file. Treat it like a password.
+5. **Share each Drive folder / spreadsheet** with the SA email using the Drive "Share" button. Grant **Editor** for read+write, **Viewer** for read-only.
 
-### Per-resource sharing
+### What the SA can access
 
-5. **Share each Drive folder / spreadsheet** with the SA email — same Drive "Share" button you'd use for a person. Grant **Editor** for read+write, **Viewer** for read-only.
+- Anything explicitly shared *with* the SA email
+- Files in Shared Drives where the SA is a member
+- Your own Drive content — **no** (it's a separate identity)
 
-### Run
-
-6. Set `GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json` and start `server.py`.
-
-### What the SA can see / do
-
-- ✅ Anything explicitly shared *with* the SA email.
-- ✅ Files in Shared Drives where the SA is a member.
-- ❌ Your own Drive content (it's a separate identity).
-
-OAuth scopes used:
-- `https://www.googleapis.com/auth/drive` — full Drive access
-- `https://www.googleapis.com/auth/spreadsheets` — explicit Sheets access
+OAuth scopes: `drive` (full access) + `spreadsheets` (explicit Sheets access).
 
 ---
 
 ## Configuration
 
-| Env var | Required | Default | Notes |
+| Env var | Required | Default | Purpose |
 |---|---|---|---|
-| `GOOGLE_APPLICATION_CREDENTIALS` | ✅ | — | Path to the SA JSON key. Standard Google env var. |
-| `GDRIVE_SERVICE_ACCOUNT_JSON` | — | — | Project-specific alias for the above. |
-| `GDRIVE_WORKING_FOLDER_ID` | — | — | **Drive write rail** — see below. When set, every write tool refuses to mutate files outside this folder (or its descendants). |
-| `GDRIVE_LOCAL_SANDBOX_DIR` | — | — | **Local-disk rail.** When set, `drive_upload_file` and `drive_export_file` reject paths that resolve outside this directory (path-traversal protection — symlinks resolved via `realpath`). |
-| `GDRIVE_DEFAULT_PAGE_SIZE` | — | `100` | Default page size for Drive list calls. |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Yes | — | Path to the SA JSON key |
+| `GDRIVE_SERVICE_ACCOUNT_JSON` | No | — | Alternative alias for the above |
+| `GDRIVE_WORKING_FOLDER_ID` | No | — | **Drive write rail** — write tools refuse to mutate files outside this folder tree |
+| `GDRIVE_LOCAL_SANDBOX_DIR` | No | — | **Local-disk rail** — upload/download reject paths outside this directory |
+| `GDRIVE_DEFAULT_PAGE_SIZE` | No | `100` | Default page size for Drive list calls |
 
-Config is loaded **lazily** on the first tool call, so importing the
-package never touches the environment — keeps tests clean.
+Config is loaded **lazily** on the first tool call.
 
 ---
 
 ## Tool reference
 
-Drive list tools accept `cursor` and return `next_cursor` for pagination.
-Sheets tools don't paginate (Sheets API doesn't use cursors).
+Drive list tools accept `cursor` and return `next_cursor` for pagination. Sheets tools don't paginate (Sheets API doesn't use cursors).
 
-### 🟦 Drive (21)
+### Drive — Identity & discovery (3 tools)
 
-#### Identity / discovery
-
-| Tool | Purpose |
+| Tool | Description |
 |---|---|
-| `drive_about()` | SA email + Drive storage quota. **Run this first** — verifies auth wired up correctly. |
-| `drive_list_shared_with_me(max_results, cursor)` | The canonical "what can the bot see?" view. |
-| `drive_list_drives(max_results, cursor)` | Shared Drives the SA is a member of. Empty list is normal on personal Gmail. |
+| `drive_about()` | SA email + storage quota. **Run this first** to verify auth. |
+| `drive_list_shared_with_me(max_results, cursor)` | Everything shared with the SA. |
+| `drive_list_drives(max_results, cursor)` | Shared Drives the SA belongs to. |
 
-#### Read
+### Drive — Read (4 tools)
 
-| Tool | Purpose |
+| Tool | Description |
 |---|---|
-| `drive_list_files(folder_id?, name_contains?, max_results, cursor)` | List children of a folder, optional name filter. |
+| `drive_list_files(folder_id?, name_contains?, max_results, cursor)` | Children of a folder, optional name filter. |
 | `drive_search(query, max_results, cursor)` | Raw Drive query: `name contains`, `fullText contains`, `mimeType =`, `modifiedTime >`. |
-| `drive_get_metadata(file_id)` | name, mimeType, size, parents, owners, modified time. |
+| `drive_get_metadata(file_id)` | Name, mimeType, size, parents, owners, modified time. |
 | `drive_get_folder_tree(folder_id, max_depth, max_files_per_level)` | Recursive BFS walk; flat list of `{depth, parent, ...}` entries. |
 
-#### Content
+### Drive — Content (2 tools)
 
-| Tool | Purpose |
+| Tool | Description |
 |---|---|
-| `drive_get_content(file_id, export_mime?)` | **Smart export**: Docs→md, Sheets→csv, Slides→text, text/* inline, binary rejected with hint. Capped at 1 MB. |
-| `drive_export_file(file_id, export_mime, local_path)` | Save Google native (or any binary) to a local path. Use for PDFs, .docx, images. |
+| `drive_get_content(file_id, export_mime?)` | Smart export: Docs→md, Sheets→csv, Slides→text, text/* inline, binary rejected with hint. Capped at 1 MB. |
+| `drive_export_file(file_id, export_mime, local_path)` | Save any file (native or binary) to a local path. Use for PDFs, .docx, images. |
 
-#### Write
+### Drive — Write (8 tools)
 
-| Tool | Purpose |
+| Tool | Description |
 |---|---|
 | `drive_create_folder(name, parent_id?)` | Create folder. |
-| `drive_copy_file(file_id, new_name?, parent_id?)` | Duplicate a file ("copy from template" workflow). Defaults to "Copy of <orig>" in the source's parent. |
-| `drive_upload_file(local_path, name?, parent_id?, mime_type?)` | Upload binary or text from disk. |
+| `drive_copy_file(file_id, new_name?, parent_id?)` | Duplicate. Defaults to "Copy of \<orig\>" in the source's parent. |
+| `drive_upload_file(local_path, name?, parent_id?, mime_type?)` | Upload from disk. |
 | `drive_create_text_file(name, content, parent_id?, mime_type)` | Create text/markdown/json from inline content. |
 | `drive_update_file_content(file_id, content, mime_type)` | Overwrite — old content kept in revision history. |
 | `drive_rename_file(file_id, new_name)` | Rename without moving. |
 | `drive_move_file(file_id, new_parent_id)` | Reparent (atomically removes old parents). |
-| `drive_trash_file(file_id)` | Move to Trash. **Recoverable for 30 days**. NOT permanent delete. |
-| `drive_untrash_file(file_id)` | Restore from Trash. Pair with `drive_trash_file`. |
+| `drive_trash_file(file_id)` | Move to Trash. **Recoverable for 30 days.** |
+| `drive_untrash_file(file_id)` | Restore from Trash. |
 
-#### Revisions
+### Drive — Revisions (2 tools)
 
-| Tool | Purpose |
+| Tool | Description |
 |---|---|
 | `drive_list_revisions(file_id, max_results, cursor)` | Version history. |
-| `drive_get_revision(file_id, revision_id, export_mime?)` | Read content of a historical revision. **Limitation**: Drive API doesn't allow exporting historical revisions of Google-native files — only text-like revisions are readable. |
+| `drive_get_revision(file_id, revision_id, export_mime?)` | Read a historical revision. Google-native file revisions are limited to text-like formats. |
 
-#### Permissions (read-only)
+### Drive — Permissions (1 tool)
 
-| Tool | Purpose |
+| Tool | Description |
 |---|---|
-| `drive_list_permissions(file_id, cursor)` | Who has access (and what role). Use to debug "the bot can't see file X". |
+| `drive_list_permissions(file_id, cursor)` | Who has access and what role. Use to debug "the bot can't see file X". |
 
-### 🟩 Sheets (21)
+### Sheets — Read (3 tools)
 
-Range strings use **A1 notation** for value tools (`Sheet1!A1:B10`, `'My
-Sheet'!A:B`). Structure tools (insert/delete rows/cols, sort, merge) use
-**GridRange** with 0-based, end-exclusive indices. Wrap sheet names with
-spaces in single quotes. The `spreadsheet_id` is the same string as the
-Drive file id — find it via `drive_search` / `drive_list_files`.
+Range strings use **A1 notation**: `Sheet1!A1:B10`, `'My Sheet'!A:B`. Structure tools use **GridRange** (0-based, end-exclusive). Wrap sheet names with spaces in single quotes.
 
-#### Read
-
-| Tool | Purpose |
+| Tool | Description |
 |---|---|
-| `sheets_get_metadata(spreadsheet_id)` | Title, locale, time zone, list of tabs (sheet ids, titles, dimensions). **Run first** — agents need tab titles to build A1 ranges. |
+| `sheets_get_metadata(spreadsheet_id)` | Title, locale, time zone, tab list. **Run first** — agents need tab titles to build ranges. |
 | `sheets_get_values(spreadsheet_id, cell_range, value_render?, major_dimension?)` | Read a range. `value_render`: `FORMATTED_VALUE` (default), `UNFORMATTED_VALUE`, `FORMULA`. |
-| `sheets_batch_get_values(spreadsheet_id, ranges[])` | Multi-range read in one call. Cheaper than N individual gets. |
+| `sheets_batch_get_values(spreadsheet_id, ranges[])` | Multi-range read in one call. |
 
-#### Write — values
+### Sheets — Write values (5 tools)
 
-| Tool | Purpose |
+| Tool | Description |
 |---|---|
-| `sheets_update_values(spreadsheet_id, cell_range, values[][], value_input?)` | **Overwrite**. `value_input`: `USER_ENTERED` (default — formulas/dates parsed) or `RAW`. |
+| `sheets_update_values(spreadsheet_id, cell_range, values[][], value_input?)` | Overwrite. `value_input`: `USER_ENTERED` (default — formulas/dates parsed) or `RAW`. |
 | `sheets_append_values(spreadsheet_id, cell_range, values[][])` | Append rows after the last row of data. |
 | `sheets_clear_values(spreadsheet_id, cell_range)` | Empty cells. Sheet structure unchanged. |
-| `sheets_batch_update_values(spreadsheet_id, data[])` | Multi-range overwrite. `data` = `[{"range": ..., "values": [[...]]}]`. |
-| `sheets_find_replace(spreadsheet_id, find, replace, sheet_id?, match_case?, match_entire_cell?)` | Find/replace text. Scope: a single tab (`sheet_id`) or all tabs. |
+| `sheets_batch_update_values(spreadsheet_id, data[])` | Multi-range overwrite. `data = [{"range": ..., "values": [[...]]}]`. |
+| `sheets_find_replace(spreadsheet_id, find, replace, sheet_id?, match_case?, match_entire_cell?)` | Find/replace. Scope: one tab or all tabs. |
 
-#### Write — structure (tab CRUD)
+### Sheets — Tab CRUD (6 tools)
 
-| Tool | Purpose |
+| Tool | Description |
 |---|---|
 | `sheets_create_spreadsheet(title, parent_id?)` | New spreadsheet. Quota gotcha applies on personal Gmail. |
-| `sheets_add_sheet(spreadsheet_id, title)` | Add a new tab. |
-| `sheets_delete_sheet(spreadsheet_id, sheet_id)` | **Irreversible** — Drive doesn't keep deleted tabs in revision history reliably. |
+| `sheets_add_sheet(spreadsheet_id, title)` | Add a tab. |
+| `sheets_delete_sheet(spreadsheet_id, sheet_id)` | **Irreversible** — deleted tabs aren't kept in revision history reliably. |
 | `sheets_rename_sheet(spreadsheet_id, sheet_id, new_title)` | Rename a tab. |
 | `sheets_duplicate_sheet(spreadsheet_id, sheet_id, new_title?)` | Defaults to `Copy of <orig>`. |
-| `sheets_copy_sheet_to_spreadsheet(source_ss_id, source_sheet_id, dest_ss_id)` | Copy a tab into a *different* spreadsheet. Source unchanged. |
+| `sheets_copy_sheet_to_spreadsheet(source_ss_id, source_sheet_id, dest_ss_id)` | Copy a tab into a different spreadsheet. Source unchanged. |
 
-#### Write — structure (rows / cols / sort)
+### Sheets — Rows / Cols / Sort (4 tools)
 
-| Tool | Purpose |
+| Tool | Description |
 |---|---|
-| `sheets_insert_rows(spreadsheet_id, sheet_id, start_index, count)` | Insert blank rows at index. Different from `append` (after data) and `clear_values` (empty content only). |
+| `sheets_insert_rows(spreadsheet_id, sheet_id, start_index, count)` | Insert blank rows at index. |
 | `sheets_delete_rows(spreadsheet_id, sheet_id, start_index, count)` | Remove rows entirely. |
-| `sheets_insert_cols(spreadsheet_id, sheet_id, start_index, count)` | Insert blank columns at index (A=0, B=1, …). |
+| `sheets_insert_cols(spreadsheet_id, sheet_id, start_index, count)` | Insert blank columns. |
 | `sheets_delete_cols(spreadsheet_id, sheet_id, start_index, count)` | Remove columns entirely. |
-| `sheets_sort_range(spreadsheet_id, sheet_id, start_row, end_row, start_col, end_col, sort_column_index, descending?)` | Sort a GridRange by one column. `sort_column_index` is the **absolute** column. |
+| `sheets_sort_range(spreadsheet_id, sheet_id, start_row, end_row, start_col, end_col, sort_column_index, descending?)` | Sort a GridRange by one column. `sort_column_index` is absolute. |
 
-#### Write — layout
+### Sheets — Layout (2 tools)
 
-| Tool | Purpose |
+| Tool | Description |
 |---|---|
-| `sheets_freeze(spreadsheet_id, sheet_id, rows=0, cols=0)` | Freeze first N rows and/or first M columns. `rows=0, cols=0` unfreezes. |
+| `sheets_freeze(spreadsheet_id, sheet_id, rows=0, cols=0)` | Freeze first N rows/cols. `rows=0, cols=0` unfreezes. |
 | `sheets_merge_cells(spreadsheet_id, sheet_id, start_row, end_row, start_col, end_col, mode)` | `mode`: `MERGE_ALL` (default), `MERGE_COLUMNS`, `MERGE_ROWS`, `UNMERGE`. |
 
-### Intentionally NOT in v1
+### Not included in v1
 
 | Drive | Sheets |
 |---|---|
 | Permanent delete (irreversible) | Cell formatting (colors, fonts, borders) |
-| Share / unshare / change role | Conditional formatting |
-| | Charts, named ranges, protected ranges, filter views |
-
-For one-off formatting, use the web UI. Revisit if agents need it.
+| Share / unshare / change role | Conditional formatting, charts, named ranges, protected ranges, filter views |
 
 ---
 
 ## Response shapes
 
-Every paginated Drive list tool wraps results in:
-```json
-{ "count": 20, "files": [/* ... */], "next_cursor": "abc..." }
-```
-
 **Trimmed Drive file:**
+
 ```json
 {
   "id": "abc123",
@@ -259,6 +203,7 @@ Every paginated Drive list tool wraps results in:
 ```
 
 **Drive content (`drive_get_content`):**
+
 ```json
 {
   "id": "abc123",
@@ -270,7 +215,8 @@ Every paginated Drive list tool wraps results in:
 }
 ```
 
-**Spreadsheet metadata (`sheets_get_metadata`):**
+**Spreadsheet metadata:**
+
 ```json
 {
   "id": "1abc...",
@@ -285,7 +231,8 @@ Every paginated Drive list tool wraps results in:
 }
 ```
 
-**Cell range (`sheets_get_values`):**
+**Cell range:**
+
 ```json
 {
   "spreadsheet_id": "1abc...",
@@ -299,8 +246,7 @@ Every paginated Drive list tool wraps results in:
 }
 ```
 
-**Errors**: validation/scope errors return `{"error": "<msg>"}`. Upstream
-Drive errors raise `DriveAPIError` with HTTP status (404 / 403 / 429).
+**Errors:** validation/scope errors return `{"error": "<msg>"}`. Upstream Drive errors return `{"error": "<msg>", "status_code": 404}`.
 
 ---
 
@@ -308,81 +254,41 @@ Drive errors raise `DriveAPIError` with HTTP status (404 / 403 / 429).
 
 ### Quota gotcha (Service Account on personal Gmail)
 
-Service accounts have **no Drive storage quota of their own** in the
-personal Gmail context. This affects file *creation* only:
+Service accounts have **no Drive storage quota** in the personal Gmail context. This affects file *creation* only:
 
-| Operation | Personal Gmail folder shared to SA | Workspace folder / Shared Drive |
+| Operation | Personal Gmail (shared to SA) | Workspace / Shared Drive |
 |---|---|---|
-| Read (Drive + Sheets) | ✅ | ✅ |
-| Update content / values | ✅ | ✅ |
-| Rename / move / trash | ✅ | ✅ |
-| Add / delete / rename / duplicate sheet (tab) | ✅ (modifies existing spreadsheet) | ✅ |
-| **Create new file / folder / spreadsheet / upload** | ❌ (SA quota = 0) | ✅ (org quota) |
+| Read (Drive + Sheets) | Works | Works |
+| Update content / values | Works | Works |
+| Rename / move / trash | Works | Works |
+| Add / delete / rename tab | Works (modifies existing spreadsheet) | Works |
+| **Create new file / folder / spreadsheet / upload** | **Fails** (SA quota = 0) | Works (org quota) |
 
-→ Practical setup: get a Workspace admin to share a folder with you;
-re-share with the SA. New files live in the org's quota.
+Workaround: get a Workspace admin to share a folder with you, then re-share with the SA.
 
 ### Safety rails
 
 Two independent rails. Both are no-ops when their env var is unset.
 
-#### Drive write rail (`GDRIVE_WORKING_FOLDER_ID`)
-
-When set, **every write tool** refuses to act outside the configured
-folder (or its descendants):
-
-- `drive_create_folder` / `drive_upload_file` / `drive_create_text_file`
-  / `sheets_create_spreadsheet` **require** `parent_id` and verify it.
-- `drive_rename_file` / `drive_move_file` / `drive_trash_file` /
-  `drive_untrash_file` / `drive_update_file_content` / `drive_copy_file`
-  walk the file's parent chain.
-- All **Sheets writes** (values + structure) walk the spreadsheet's
-  parent chain — the spreadsheet itself must live inside the rail.
-- **Read tools are unaffected** — read is always safe.
-
-Implementation: `gdrive_mcp/safety.py::assert_in_working_folder` does a
-**BFS over all parents** at every node (Drive permits multiple parents
-within a Shared Drive), short-circuiting as soon as any path reaches
-the rail folder. Rejected calls return `{"error": ..., "violation":
-"working_folder"}`.
+**Drive write rail** (`GDRIVE_WORKING_FOLDER_ID`) — every write tool verifies the target file/folder is inside the configured folder tree. Read tools are unaffected. Rejected calls return `{"error": ..., "violation": "working_folder"}`.
 
 ```bash
-GDRIVE_WORKING_FOLDER_ID=1abc...xyz   # lock to a single folder
+GDRIVE_WORKING_FOLDER_ID=1abc...xyz   # lock writes to one folder
 unset GDRIVE_WORKING_FOLDER_ID        # allow writes anywhere SA has Editor
 ```
 
-#### Local-disk rail (`GDRIVE_LOCAL_SANDBOX_DIR`)
-
-When set, `drive_upload_file` and `drive_export_file` reject local paths
-that resolve outside the configured directory — defends against an agent
-or malicious MCP client trying to read/write `~/.ssh/authorized_keys`,
-`/etc/cron.d/...`, or anywhere else the SA process has access. Symlinks
-are resolved via `os.path.realpath` so escapes via symlinks are caught.
-Rejected calls return `{"error": ..., "violation": "local_sandbox"}`.
+**Local-disk rail** (`GDRIVE_LOCAL_SANDBOX_DIR`) — `drive_upload_file` and `drive_export_file` reject local paths outside the configured directory. Symlinks are resolved via `os.path.realpath`. Defends against path-traversal attacks. Rejected calls return `{"error": ..., "violation": "local_sandbox"}`.
 
 ```bash
 GDRIVE_LOCAL_SANDBOX_DIR=/var/agent-workspace
 ```
 
-#### Error response shape
-
-All caught errors return a structured dict instead of raising:
-
-```json
-{ "error": "<message>", "status_code": 404 }                       // upstream Drive error
-{ "error": "...", "violation": "working_folder" }                  // Drive rail
-{ "error": "...", "violation": "local_sandbox" }                   // local rail
-```
-
-`HttpError` (404 / 403 / 429 / 500) gets wrapped automatically — the
-MCP client never sees a raw Python traceback.
-
 ### Sheets value semantics
 
-| Field | Values | Meaning |
+| Field | Options | Meaning |
 |---|---|---|
-| `value_input` | `USER_ENTERED` (default), `RAW` | How input is parsed. `USER_ENTERED` treats values as if a user typed them (formulas, dates auto-detected). `RAW` stores literally. |
-| `value_render` | `FORMATTED_VALUE` (default), `UNFORMATTED_VALUE`, `FORMULA` | How output is returned. `FORMATTED_VALUE` is what users see. `UNFORMATTED_VALUE` returns raw values (dates as serial numbers). `FORMULA` returns `=A1+B1` instead of the computed value. |
+| `value_input` | `USER_ENTERED` (default), `RAW` | How input is parsed. `USER_ENTERED` treats values as if typed (formulas, dates auto-detected). `RAW` stores literally. |
+| `value_render` | `FORMATTED_VALUE` (default), `UNFORMATTED_VALUE`, `FORMULA` | How output is returned. `FORMATTED_VALUE` is what users see. `FORMULA` returns `=A1+B1` instead of the computed value. |
 | `major_dimension` | `ROWS` (default), `COLUMNS` | Whether `values[r][c]` indexes by row or column. |
 
 ---
@@ -391,35 +297,34 @@ MCP client never sees a raw Python traceback.
 
 ```
 gdrive/
-├── server.py                          ← MCP stdio entrypoint
+├── server.py                          MCP stdio entrypoint
 ├── gdrive_mcp/
-│   ├── config.py                      ← env → frozen Config (fail-fast)
-│   ├── drive_client.py                ← Drive v3 + Sheets v4 service factories + DriveAPIError
-│   ├── normalize.py                   ← pure trim/MIME helpers (incl. trim_spreadsheet)
-│   ├── safety.py                      ← working-folder rail
-│   ├── api/                           ← thin REST wrappers (sync; googleapiclient is sync)
-│   │   ├── about.py    files.py    content.py
-│   │   ├── revisions.py    permissions.py    sheets.py
-│   └── tools/                         ← async @mcp.tool() wrappers (asyncio.to_thread)
-│       ├── _registry.py               ← FastMCP singleton + lazy get_config / get_service / get_sheets_service
-│       ├── about.py    files.py    content.py
-│       └── revisions.py    permissions.py    sheets.py
-└── tests/                             ← 186 unit tests, fully offline
+│   ├── config.py                      env → frozen Config (fail-fast)
+│   ├── drive_client.py                Drive v3 + Sheets v4 service factories + DriveAPIError
+│   ├── normalize.py                   pure trim/MIME helpers
+│   ├── safety.py                      working-folder rail
+│   ├── api/                           thin REST wrappers (sync — googleapiclient is sync)
+│   │   ├── about.py    files.py       content.py
+│   │   ├── revisions.py               permissions.py    sheets.py
+│   └── tools/                         async @mcp.tool() wrappers (asyncio.to_thread)
+│       ├── _registry.py               FastMCP singleton + lazy getters
+│       ├── about.py    files.py       content.py
+│       └── revisions.py               permissions.py    sheets.py
+└── tests/                             186 unit tests, fully offline
 ```
 
-**Layering rules** (enforced by import direction):
+Imports flow downward only:
 
-| Layer | Knows about | Talks to |
+| Layer | Responsibility | Depends on |
 |---|---|---|
-| `tools/*` | MCP, normalize, safety, asyncio | `api/*` |
-| `api/*` | googleapiclient verbs | `service` (sync) |
-| `drive_client.py` | google-auth, googleapiclient | network |
-| `normalize.py` | pure data + MIME constants | nothing |
-| `safety.py` | ancestor walk via service | nothing else |
-| `config.py` | env vars | nothing |
+| `tools/*` | LLM-facing contract — docstrings, validation, trimming | `api/*`, normalize, safety |
+| `api/*` | googleapiclient verb wrappers | `drive_client.py` (sync) |
+| `drive_client.py` | Auth + transport + error mapping | Network |
+| `normalize.py` | Pure data + MIME constants | Nothing |
+| `safety.py` | Ancestor walk via service (read-only) | Nothing else |
+| `config.py` | Environment variable loading | Nothing |
 
-`googleapiclient` is sync — tools wrap calls in `asyncio.to_thread()` so
-the MCP event loop stays responsive.
+`googleapiclient` is sync — tools wrap calls in `asyncio.to_thread()` to keep the MCP event loop responsive.
 
 ---
 
@@ -429,25 +334,7 @@ the MCP event loop stays responsive.
 .venv/bin/pytest -q          # 186 tests, ~1s
 ```
 
-100% offline. The conftest builds two `MagicMock` services (Drive +
-Sheets) and patches `get_config()` / `get_service()` /
-`get_sheets_service()` in every tool module. No real Google credentials
-needed.
-
-| Layer | Coverage |
-|---|---|
-| `config.py` | Env loading, validation, fail-fast on missing key file |
-| `safety.py` | Parent-chain walk, descendant detection, rail-disabled noop |
-| `normalize.py` | MIME helpers, trim_file/user/revision/permission/spreadsheet, pagination envelope |
-| `api/files.py` | Verbs + kwargs sent to googleapiclient (Drive) |
-| `api/sheets.py` | Sheets v4 verbs (values get/update/append/clear/batch, structure batchUpdate, create-via-drive) |
-| `tools/about.py` | Identity + shared-with-me listing, clamping |
-| `tools/files.py` | Query construction, escaping, folder-tree BFS, all safety-rail interactions |
-| `tools/content.py` | Smart export per MIME, truncation, file I/O, all safety-rail interactions |
-| `tools/revisions.py` | Native-file limitation, text decode, binary rejection |
-| `tools/permissions.py` | Listing + envelope |
-| `tools/sheets.py` | A1 range passthrough, value-render options, append vs update vs batch, structure mutations, safety-rail on spreadsheet parent |
-| `_registry` | All 42 tools registered via `mcp.list_tools()` |
+Fully offline. `conftest.py` builds two `MagicMock` services (Drive + Sheets) and patches all getters in every tool module. No real Google credentials needed.
 
 ---
 
@@ -456,7 +343,7 @@ needed.
 ```bash
 ADMIN_AUTH=(-H "Authorization: Bearer $GOCLAW_GATEWAY_TOKEN" -H "X-GoClaw-User-Id: admin")
 
-# 1. Register the server (returns SERVER_ID)
+# Register
 SERVER_ID=$(curl -sS "${ADMIN_AUTH[@]}" -H "Content-Type: application/json" \
   -X POST http://localhost:18790/v1/mcp/servers \
   -d '{
@@ -474,17 +361,12 @@ SERVER_ID=$(curl -sS "${ADMIN_AUTH[@]}" -H "Content-Type: application/json" \
     "enabled": true
   }' | jq -r .id)
 
-# 2. Grant to a specific agent
+# Grant to an agent
 curl -sS "${ADMIN_AUTH[@]}" -H "Content-Type: application/json" \
   -X POST "http://localhost:18790/v1/mcp/servers/$SERVER_ID/grants/agent" \
   -d "{\"agent_id\":\"<agent-uuid>\",\"enabled\":true}"
 
-# 3. Reload + verify (should list all 42 tools)
-curl -sS "${ADMIN_AUTH[@]}" \
-  -X POST "http://localhost:18790/v1/mcp/servers/$SERVER_ID/reconnect"
-
+# Verify — should list all 42 tools
 curl -sS "${ADMIN_AUTH[@]}" \
   "http://localhost:18790/v1/mcp/servers/$SERVER_ID/tools" | jq '.[].name'
 ```
-
-Only granted agents see the tools in their MCP discovery.
