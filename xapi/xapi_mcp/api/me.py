@@ -13,6 +13,28 @@ def get_me(client: XClient) -> dict[str, Any]:
     return resp.data or {}
 
 
+def get_my_followers(
+    client: XClient, max_results: int = 100, cursor: str | None = None
+) -> dict[str, Any]:
+    me = client.v2.get_me()
+    me_id = me.data.id if me.data else None
+    if me_id is None:
+        return {"items": [], "next_cursor": None}
+    from . import users as api_users
+    return api_users.get_followers(client, me_id, max_results=max_results, cursor=cursor)
+
+
+def get_my_following(
+    client: XClient, max_results: int = 100, cursor: str | None = None
+) -> dict[str, Any]:
+    me = client.v2.get_me()
+    me_id = me.data.id if me.data else None
+    if me_id is None:
+        return {"items": [], "next_cursor": None}
+    from . import users as api_users
+    return api_users.get_following(client, me_id, max_results=max_results, cursor=cursor)
+
+
 def get_my_recent_posts(client: XClient, max_results: int = 10) -> dict[str, Any]:
     """List the authenticated user's recent tweets. Returns ``{items, next_cursor}``."""
     me = client.v2.get_me()

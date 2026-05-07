@@ -8,11 +8,11 @@ goclaw, each with its own env (Cách 1).
 
 | | |
 |---|---|
-| **Tools** | 17 — posts, engagement, users, DMs, media, budget |
+| **Tools** | 37 — posts, engagement, users, DMs, media, profile, bookmarks, research, analytics, budget |
 | **Auth** | OAuth 1.0a User Context (4 env vars from developer.x.com) |
 | **Library** | [tweepy](https://github.com/tweepy/tweepy) v4.14+ |
 | **Pricing** | Pay-per-use (post-2026-04-20 schedule), guarded by daily USD cap |
-| **Tests** | 68 unit tests, fully offline (mocked tweepy.Client) |
+| **Tests** | 93 unit tests, fully offline (mocked tweepy.Client) |
 | **Transport** | stdio |
 
 This is **not** a read-only Twitter scraper — it's the authenticated
@@ -59,6 +59,7 @@ Pricing source: <https://docs.x.com/x-api/getting-started/pricing>
 | `x_post_tweet(text, reply_to_tweet_id?, quote_tweet_id?, media_ids?)` | Publish a tweet. URL → 13× cost |
 | `x_delete_tweet(tweet_id)` | Delete a tweet you authored. Cannot be undone |
 | `x_get_tweet(tweet_id)` | Lookup a single tweet (any author) |
+| `x_pin_tweet(tweet_id)` / `x_unpin_tweet(tweet_id)` | Pin / unpin to your profile |
 
 ### Engagement
 
@@ -74,6 +75,9 @@ Pricing source: <https://docs.x.com/x-api/getting-started/pricing>
 | `x_get_user(handle_or_id)` | Lookup by `@handle` or numeric id |
 | `x_follow_user(handle_or_id)` / `x_unfollow_user(handle_or_id)` | Follow / unfollow |
 | `x_block_user(handle_or_id)` / `x_unblock_user(handle_or_id)` | Block / unblock |
+| `x_mute_user(handle_or_id)` / `x_unmute_user(handle_or_id)` | Mute / unmute |
+| `x_get_my_followers(max=100, cursor?)` | Your own followers — owned tier |
+| `x_get_my_following(max=100, cursor?)` | Accounts you follow — owned tier |
 
 ### DMs
 
@@ -86,6 +90,42 @@ Pricing source: <https://docs.x.com/x-api/getting-started/pricing>
 | Tool | Description |
 |---|---|
 | `x_upload_media(local_path)` | Upload image / video / GIF (v1.1 endpoint). Returns `media_id` to feed into `x_post_tweet(media_ids=[...])` |
+
+### Profile (v1.1, free)
+
+| Tool | Description |
+|---|---|
+| `x_update_profile(name?, description?, location?, url?)` | Edit display name / bio / location / website |
+| `x_update_profile_image(local_path)` | Replace avatar (PNG/JPG/GIF, ≤ 700KB) |
+
+### Bookmarks
+
+| Tool | Description |
+|---|---|
+| `x_bookmark_tweet(tweet_id)` / `x_remove_bookmark(tweet_id)` | Add / remove from bookmarks |
+| `x_get_my_bookmarks(max=10)` | List bookmarks — owned tier |
+
+### Research / discovery
+
+| Tool | Description |
+|---|---|
+| `x_search_recent_tweets(query, max=10, cursor?)` | Last-7-day search w/ X operators |
+| `x_get_user_recent_posts(handle_or_id, max=10)` | Lookup another user's recent tweets |
+| `x_get_trending_topics(woeid=1)` | Trending topics by location (v1.1) |
+| `x_get_user_followers(handle_or_id, max=100, cursor?)` | Other user's followers — standard tier |
+
+> **Cost note**: Search and standard reads are $0.005/result. For bulk research,
+> prefer the [socialdata](../socialdata/) MCP server (free scraping).
+
+### Analytics — track post performance
+
+| Tool | Description |
+|---|---|
+| `x_get_tweet_metrics(tweet_id)` | Public + non-public + organic metrics (own tweets only get the latter two — impressions, profile/url clicks, video views) |
+| `x_get_liking_users(tweet_id, max=100)` | Who liked the tweet |
+| `x_get_retweeters(tweet_id, max=100)` | Who retweeted |
+| `x_get_quote_tweets(tweet_id, max=10)` | Quote-tweets of this post |
+| `x_get_replies(tweet_id, max=10)` | Replies in same conversation (search-based; last 7 days) |
 
 ### Diagnostics
 
