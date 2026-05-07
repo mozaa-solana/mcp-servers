@@ -171,3 +171,17 @@ def program_values_batch_update(svc: MagicMock, payload: dict[str, Any]) -> None
 
 def program_structure_batch_update(svc: MagicMock, payload: dict[str, Any]) -> None:
     svc.spreadsheets.return_value.batchUpdate.return_value.execute.return_value = payload
+
+
+def program_sheets_copy_to(svc: MagicMock, payload: dict[str, Any]) -> None:
+    svc.spreadsheets.return_value.sheets.return_value.copyTo.return_value.execute.return_value = (
+        payload
+    )
+
+
+def program_drives_list(svc: MagicMock, payload: dict[str, Any]) -> None:
+    svc.drives.return_value.list.return_value.execute.return_value = payload
+
+
+def program_files_copy(svc: MagicMock, payload: dict[str, Any]) -> None:
+    svc.files.return_value.copy.return_value.execute.return_value = payload

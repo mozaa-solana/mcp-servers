@@ -8,6 +8,7 @@ from gdrive_mcp.tools import sheets as tools
 from tests.conftest import (
     program_files_create,
     program_files_get,
+    program_sheets_copy_to,
     program_spreadsheet_get,
     program_structure_batch_update,
     program_values_append,
@@ -261,6 +262,133 @@ class TestStructureMutations:
         assert body["requests"][0]["updateSheetProperties"]["properties"]["title"] == "Renamed"
         assert body["requests"][0]["updateSheetProperties"]["fields"] == "title"
 
+    async def test_find_replace_returns_summary(self, sheets_svc):
+        program_structure_batch_update(
+            sheets_svc,
+            {
+                "replies": [
+                    {
+                        "findReplace": {
+                            "occurrencesChanged": 7,
+                            "valuesChanged": 5,
+                            "rowsChanged": 3,
+                            "sheetsChanged": 1,
+                        }
+                    }
+                ]
+            },
+        )
+        out = await tools.sheets_find_replace("SS", find="x", replace="y", sheet_id=0)
+        assert out["occurrences_changed"] == 7
+        body = sheets_svc.spreadsheets.return_value.batchUpdate.call_args.kwargs["body"]
+        fr = body["requests"][0]["findReplace"]
+        assert fr["sheetId"] == 0
+        assert "allSheets" not in fr
+
+    async def test_find_replace_all_sheets_when_sheet_id_none(self, sheets_svc):
+        program_structure_batch_update(sheets_svc, {"replies": [{"findReplace": {}}]})
+        await tools.sheets_find_replace("SS", "x", "y")
+        body = sheets_svc.spreadsheets.return_value.batchUpdate.call_args.kwargs["body"]
+        assert body["requests"][0]["findReplace"]["allSheets"] is True
+
+    @pytest.mark.parametrize("count,err", [(0, "count must be"), (-1, "count must be")])
+    async def test_insert_rows_rejects_invalid_count(self, sheets_svc, count, err):
+        out = await tools.sheets_insert_rows("SS", 0, 1, count)
+        assert err in out["error"]
+
+    async def test_insert_rows_sends_correct_request(self, sheets_svc):
+        program_structure_batch_update(sheets_svc, {"replies": [{"insertDimension": {}}]})
+        await tools.sheets_insert_rows("SS", sheet_id=0, start_index=2, count=3)
+        body = sheets_svc.spreadsheets.return_value.batchUpdate.call_args.kwargs["body"]
+        rng = body["requests"][0]["insertDimension"]["range"]
+        assert rng["dimension"] == "ROWS"
+        assert (rng["startIndex"], rng["endIndex"]) == (2, 5)
+
+    async def test_delete_rows_sends_correct_request(self, sheets_svc):
+        program_structure_batch_update(sheets_svc, {"replies": [{"deleteDimension": {}}]})
+        await tools.sheets_delete_rows("SS", sheet_id=0, start_index=1, count=2)
+        body = sheets_svc.spreadsheets.return_value.batchUpdate.call_args.kwargs["body"]
+        rng = body["requests"][0]["deleteDimension"]["range"]
+        assert rng["dimension"] == "ROWS"
+        assert (rng["startIndex"], rng["endIndex"]) == (1, 3)
+
+    async def test_insert_cols(self, sheets_svc):
+        program_structure_batch_update(sheets_svc, {"replies": [{"insertDimension": {}}]})
+        await tools.sheets_insert_cols("SS", sheet_id=0, start_index=4, count=1)
+        body = sheets_svc.spreadsheets.return_value.batchUpdate.call_args.kwargs["body"]
+        assert body["requests"][0]["insertDimension"]["range"]["dimension"] == "COLUMNS"
+
+    async def test_delete_cols(self, sheets_svc):
+        program_structure_batch_update(sheets_svc, {"replies": [{"deleteDimension": {}}]})
+        await tools.sheets_delete_cols("SS", sheet_id=0, start_index=0, count=2)
+        body = sheets_svc.spreadsheets.return_value.batchUpdate.call_args.kwargs["body"]
+        assert body["requests"][0]["deleteDimension"]["range"]["dimension"] == "COLUMNS"
+
+    async def test_sort_range_descending(self, sheets_svc):
+        program_structure_batch_update(sheets_svc, {"replies": [{"sortRange": {}}]})
+        out = await tools.sheets_sort_range(
+            "SS", sheet_id=0,
+            start_row_index=0, end_row_index=10,
+            start_column_index=0, end_column_index=3,
+            sort_column_index=1, descending=True,
+        )
+        assert out["order"] == "DESCENDING"
+        body = sheets_svc.spreadsheets.return_value.batchUpdate.call_args.kwargs["body"]
+        spec = body["requests"][0]["sortRange"]["sortSpecs"][0]
+        assert spec == {"dimensionIndex": 1, "sortOrder": "DESCENDING"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+class TestCopySheetTo:
+    async def test_returns_new_props(self, sheets_svc):
+        program_sheets_copy_to(
+            sheets_svc, {"sheetId": 99, "title": "Copy of X", "index": 1}
+        )
+        out = await tools.sheets_copy_sheet_to_spreadsheet("SS1", 0, "SS2")
+        assert out["new_sheet_id"] == 99
+        assert out["destination_spreadsheet_id"] == "SS2"
+
+    async def test_safety_rail_on_destination(self, sheets_svc_with_safety):
+        drive_stub, sheets_stub, _ = sheets_svc_with_safety
+        program_files_get(drive_stub, {"parents": []})  # dest outside rail
+        with pytest.raises(SafetyViolation):
+            await tools.sheets_copy_sheet_to_spreadsheet("SS1", 0, "SS2_OUTSIDE")
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+class TestFreezeAndMerge:
+    async def test_freeze_sets_grid_props(self, sheets_svc):
+        program_structure_batch_update(
+            sheets_svc, {"replies": [{"updateSheetProperties": {}}]}
+        )
+        out = await tools.sheets_freeze("SS", sheet_id=0, rows=1, cols=2)
+        assert out["frozen_rows"] == 1
+        assert out["frozen_cols"] == 2
+
+    async def test_merge_default_mode(self, sheets_svc):
+        program_structure_batch_update(sheets_svc, {"replies": [{"mergeCells": {}}]})
+        out = await tools.sheets_merge_cells("SS", 0, 0, 2, 0, 3)
+        assert out["mode"] == "MERGE_ALL"
+        body = sheets_svc.spreadsheets.return_value.batchUpdate.call_args.kwargs["body"]
+        assert body["requests"][0]["mergeCells"]["mergeType"] == "MERGE_ALL"
+
+    async def test_merge_unmerge_mode_uses_unmerge_request(self, sheets_svc):
+        program_structure_batch_update(sheets_svc, {"replies": [{"unmergeCells": {}}]})
+        await tools.sheets_merge_cells("SS", 0, 0, 2, 0, 3, mode="UNMERGE")
+        body = sheets_svc.spreadsheets.return_value.batchUpdate.call_args.kwargs["body"]
+        assert "unmergeCells" in body["requests"][0]
+        assert "mergeCells" not in body["requests"][0]
+
+    async def test_merge_invalid_mode(self, sheets_svc):
+        out = await tools.sheets_merge_cells("SS", 0, 0, 2, 0, 3, mode="MERGE_FOO")
+        assert "invalid mode" in out["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+class TestStructureMutations2:
     async def test_duplicate_sheet(self, sheets_svc):
         program_structure_batch_update(
             sheets_svc,

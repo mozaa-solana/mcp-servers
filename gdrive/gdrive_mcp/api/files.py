@@ -114,3 +114,42 @@ def trash(service: Any, *, file_id: str) -> dict[str, Any]:
         )
         .execute()
     )
+
+
+def untrash(service: Any, *, file_id: str) -> dict[str, Any]:
+    """Restore from Trash — pair with :func:`trash`."""
+    return (
+        service.files()
+        .update(
+            fileId=file_id,
+            body={"trashed": False},
+            fields=FILE_FIELDS,
+            supportsAllDrives=True,
+        )
+        .execute()
+    )
+
+
+def copy_file(
+    service: Any,
+    *,
+    file_id: str,
+    name: str | None = None,
+    parent_id: str | None = None,
+) -> dict[str, Any]:
+    """``files.copy`` — duplicate a file, optionally into a new parent."""
+    body: dict[str, Any] = {}
+    if name:
+        body["name"] = name
+    if parent_id:
+        body["parents"] = [parent_id]
+    return (
+        service.files()
+        .copy(
+            fileId=file_id,
+            body=body,
+            fields=FILE_FIELDS,
+            supportsAllDrives=True,
+        )
+        .execute()
+    )

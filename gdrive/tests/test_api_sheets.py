@@ -103,6 +103,118 @@ class TestStructureAPI:
 
 
 @pytest.mark.unit
+class TestFindReplaceAndDimensions:
+    def test_find_replace_single_sheet(self):
+        svc = MagicMock()
+        captured = _record(lambda: svc.spreadsheets.return_value.batchUpdate)
+        api.find_replace(svc, spreadsheet_id="SS", find="x", replace="y", sheet_id=42)
+        req = captured["body"]["requests"][0]["findReplace"]
+        assert req["find"] == "x"
+        assert req["replacement"] == "y"
+        assert req["sheetId"] == 42
+        assert "allSheets" not in req
+
+    def test_find_replace_all_sheets(self):
+        svc = MagicMock()
+        captured = _record(lambda: svc.spreadsheets.return_value.batchUpdate)
+        api.find_replace(svc, spreadsheet_id="SS", find="x", replace="y")
+        req = captured["body"]["requests"][0]["findReplace"]
+        assert req["allSheets"] is True
+        assert "sheetId" not in req
+
+    def test_insert_dimension_rows(self):
+        svc = MagicMock()
+        captured = _record(lambda: svc.spreadsheets.return_value.batchUpdate)
+        api.insert_dimension(
+            svc, spreadsheet_id="SS", sheet_id=0, dimension="ROWS",
+            start_index=2, count=3,
+        )
+        rng = captured["body"]["requests"][0]["insertDimension"]["range"]
+        assert rng == {"sheetId": 0, "dimension": "ROWS", "startIndex": 2, "endIndex": 5}
+
+    def test_delete_dimension_cols(self):
+        svc = MagicMock()
+        captured = _record(lambda: svc.spreadsheets.return_value.batchUpdate)
+        api.delete_dimension(
+            svc, spreadsheet_id="SS", sheet_id=0, dimension="COLUMNS",
+            start_index=1, count=2,
+        )
+        rng = captured["body"]["requests"][0]["deleteDimension"]["range"]
+        assert rng["dimension"] == "COLUMNS"
+        assert (rng["startIndex"], rng["endIndex"]) == (1, 3)
+
+
+@pytest.mark.unit
+class TestSortAndFreeze:
+    def test_sort_range_descending(self):
+        svc = MagicMock()
+        captured = _record(lambda: svc.spreadsheets.return_value.batchUpdate)
+        api.sort_range(
+            svc, spreadsheet_id="SS", sheet_id=0,
+            start_row_index=0, end_row_index=10,
+            start_column_index=0, end_column_index=3,
+            sort_column_index=1, descending=True,
+        )
+        req = captured["body"]["requests"][0]["sortRange"]
+        assert req["range"]["startRowIndex"] == 0
+        assert req["sortSpecs"][0] == {"dimensionIndex": 1, "sortOrder": "DESCENDING"}
+
+    def test_freeze_sets_grid_props(self):
+        svc = MagicMock()
+        captured = _record(lambda: svc.spreadsheets.return_value.batchUpdate)
+        api.freeze(svc, spreadsheet_id="SS", sheet_id=5, rows=1, cols=2)
+        req = captured["body"]["requests"][0]["updateSheetProperties"]
+        assert req["properties"]["sheetId"] == 5
+        assert req["properties"]["gridProperties"]["frozenRowCount"] == 1
+        assert req["properties"]["gridProperties"]["frozenColumnCount"] == 2
+        assert "frozenRowCount" in req["fields"]
+
+
+@pytest.mark.unit
+class TestMergeAndCopy:
+    def test_merge_cells_default_type(self):
+        svc = MagicMock()
+        captured = _record(lambda: svc.spreadsheets.return_value.batchUpdate)
+        api.merge_cells(
+            svc, spreadsheet_id="SS", sheet_id=0,
+            start_row_index=0, end_row_index=2,
+            start_column_index=0, end_column_index=3,
+        )
+        req = captured["body"]["requests"][0]["mergeCells"]
+        assert req["mergeType"] == "MERGE_ALL"
+        assert req["range"]["endRowIndex"] == 2
+
+    def test_unmerge_cells(self):
+        svc = MagicMock()
+        captured = _record(lambda: svc.spreadsheets.return_value.batchUpdate)
+        api.unmerge_cells(
+            svc, spreadsheet_id="SS", sheet_id=0,
+            start_row_index=0, end_row_index=2,
+            start_column_index=0, end_column_index=3,
+        )
+        assert "unmergeCells" in captured["body"]["requests"][0]
+
+    def test_copy_sheet_to(self):
+        svc = MagicMock()
+        captured: dict = {}
+
+        def recorder(**kwargs):
+            captured.update(kwargs)
+            m = MagicMock()
+            m.execute.return_value = {}
+            return m
+
+        svc.spreadsheets.return_value.sheets.return_value.copyTo.side_effect = recorder
+        api.copy_sheet_to(
+            svc, source_spreadsheet_id="SS1", source_sheet_id=42,
+            destination_spreadsheet_id="SS2",
+        )
+        assert captured["spreadsheetId"] == "SS1"
+        assert captured["sheetId"] == 42
+        assert captured["body"] == {"destinationSpreadsheetId": "SS2"}
+
+
+@pytest.mark.unit
 class TestCreateViaDrive:
     def test_create_with_parent(self):
         drive = MagicMock()

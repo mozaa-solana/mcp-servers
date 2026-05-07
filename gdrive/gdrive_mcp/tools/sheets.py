@@ -328,6 +328,311 @@ async def sheets_rename_sheet(
 
 
 @mcp.tool()
+async def sheets_find_replace(
+    spreadsheet_id: str,
+    find: str,
+    replace: str,
+    sheet_id: int | None = None,
+    match_case: bool = False,
+    match_entire_cell: bool = False,
+) -> dict[str, Any]:
+    """Find/replace text. Scope: a single tab (`sheet_id`) or all tabs (None).
+
+    Returns the count of cells affected. Use `match_entire_cell=True` to
+    require an exact match (avoids partial-string substitutions).
+    """
+    await _check_safety(spreadsheet_id)
+    resp = await asyncio.to_thread(
+        api.find_replace,
+        get_sheets_service(),
+        spreadsheet_id=spreadsheet_id,
+        find=find,
+        replace=replace,
+        sheet_id=sheet_id,
+        match_case=match_case,
+        match_entire_cell=match_entire_cell,
+    )
+    fr = (resp.get("replies") or [{}])[0].get("findReplace") or {}
+    return {
+        "spreadsheet_id": spreadsheet_id,
+        "occurrences_changed": fr.get("occurrencesChanged", 0),
+        "values_changed": fr.get("valuesChanged", 0),
+        "rows_changed": fr.get("rowsChanged", 0),
+        "sheets_changed": fr.get("sheetsChanged", 0),
+    }
+
+
+@mcp.tool()
+async def sheets_insert_rows(
+    spreadsheet_id: str, sheet_id: int, start_index: int, count: int = 1
+) -> dict[str, Any]:
+    """Insert *count* blank rows at row index *start_index* (0-based).
+
+    Existing rows at *start_index* and below shift down. Different from
+    `sheets_append_values` (which appends after the last row of data) and
+    `sheets_clear_values` (which only empties cells).
+    """
+    if count < 1:
+        return {"error": "count must be >= 1"}
+    await _check_safety(spreadsheet_id)
+    await asyncio.to_thread(
+        api.insert_dimension,
+        get_sheets_service(),
+        spreadsheet_id=spreadsheet_id,
+        sheet_id=sheet_id,
+        dimension="ROWS",
+        start_index=start_index,
+        count=count,
+    )
+    return {
+        "spreadsheet_id": spreadsheet_id,
+        "sheet_id": int(sheet_id),
+        "inserted_rows": int(count),
+        "at_index": int(start_index),
+    }
+
+
+@mcp.tool()
+async def sheets_delete_rows(
+    spreadsheet_id: str, sheet_id: int, start_index: int, count: int = 1
+) -> dict[str, Any]:
+    """Delete *count* rows starting at row index *start_index* (0-based).
+
+    Removes the rows entirely (not just clears content). Rows below shift up.
+    """
+    if count < 1:
+        return {"error": "count must be >= 1"}
+    await _check_safety(spreadsheet_id)
+    await asyncio.to_thread(
+        api.delete_dimension,
+        get_sheets_service(),
+        spreadsheet_id=spreadsheet_id,
+        sheet_id=sheet_id,
+        dimension="ROWS",
+        start_index=start_index,
+        count=count,
+    )
+    return {
+        "spreadsheet_id": spreadsheet_id,
+        "sheet_id": int(sheet_id),
+        "deleted_rows": int(count),
+        "at_index": int(start_index),
+    }
+
+
+@mcp.tool()
+async def sheets_insert_cols(
+    spreadsheet_id: str, sheet_id: int, start_index: int, count: int = 1
+) -> dict[str, Any]:
+    """Insert *count* blank columns at column index *start_index* (0-based).
+
+    Column A = 0, B = 1, etc. Columns at *start_index* and right shift right.
+    """
+    if count < 1:
+        return {"error": "count must be >= 1"}
+    await _check_safety(spreadsheet_id)
+    await asyncio.to_thread(
+        api.insert_dimension,
+        get_sheets_service(),
+        spreadsheet_id=spreadsheet_id,
+        sheet_id=sheet_id,
+        dimension="COLUMNS",
+        start_index=start_index,
+        count=count,
+    )
+    return {
+        "spreadsheet_id": spreadsheet_id,
+        "sheet_id": int(sheet_id),
+        "inserted_cols": int(count),
+        "at_index": int(start_index),
+    }
+
+
+@mcp.tool()
+async def sheets_delete_cols(
+    spreadsheet_id: str, sheet_id: int, start_index: int, count: int = 1
+) -> dict[str, Any]:
+    """Delete *count* columns starting at column index *start_index* (0-based)."""
+    if count < 1:
+        return {"error": "count must be >= 1"}
+    await _check_safety(spreadsheet_id)
+    await asyncio.to_thread(
+        api.delete_dimension,
+        get_sheets_service(),
+        spreadsheet_id=spreadsheet_id,
+        sheet_id=sheet_id,
+        dimension="COLUMNS",
+        start_index=start_index,
+        count=count,
+    )
+    return {
+        "spreadsheet_id": spreadsheet_id,
+        "sheet_id": int(sheet_id),
+        "deleted_cols": int(count),
+        "at_index": int(start_index),
+    }
+
+
+@mcp.tool()
+async def sheets_sort_range(
+    spreadsheet_id: str,
+    sheet_id: int,
+    start_row_index: int,
+    end_row_index: int,
+    start_column_index: int,
+    end_column_index: int,
+    sort_column_index: int,
+    descending: bool = False,
+) -> dict[str, Any]:
+    """Sort a GridRange by one column.
+
+    All indices are 0-based, end indices are *exclusive* (Drive convention).
+    `sort_column_index` is the **absolute** column index in the sheet (not an
+    offset within the range). Example: to sort A1:C10 by column B descending,
+    pass start_row_index=0, end_row_index=10, start_column_index=0,
+    end_column_index=3, sort_column_index=1, descending=True.
+    """
+    await _check_safety(spreadsheet_id)
+    await asyncio.to_thread(
+        api.sort_range,
+        get_sheets_service(),
+        spreadsheet_id=spreadsheet_id,
+        sheet_id=sheet_id,
+        start_row_index=start_row_index,
+        end_row_index=end_row_index,
+        start_column_index=start_column_index,
+        end_column_index=end_column_index,
+        sort_column_index=sort_column_index,
+        descending=descending,
+    )
+    return {
+        "spreadsheet_id": spreadsheet_id,
+        "sheet_id": int(sheet_id),
+        "sorted_by_column": int(sort_column_index),
+        "order": "DESCENDING" if descending else "ASCENDING",
+    }
+
+
+@mcp.tool()
+async def sheets_copy_sheet_to_spreadsheet(
+    source_spreadsheet_id: str,
+    source_sheet_id: int,
+    destination_spreadsheet_id: str,
+) -> dict[str, Any]:
+    """Copy a tab from one spreadsheet into a different spreadsheet.
+
+    Source remains unchanged. Returns the new sheet's properties inside the
+    destination. Safety rail applies to the **destination** (the spreadsheet
+    being mutated) — source only needs read access.
+    """
+    cfg = get_config()
+    if cfg.working_folder_id:
+        await asyncio.to_thread(
+            assert_in_working_folder,
+            get_service(),
+            cfg.working_folder_id,
+            destination_spreadsheet_id,
+        )
+    resp = await asyncio.to_thread(
+        api.copy_sheet_to,
+        get_sheets_service(),
+        source_spreadsheet_id=source_spreadsheet_id,
+        source_sheet_id=source_sheet_id,
+        destination_spreadsheet_id=destination_spreadsheet_id,
+    )
+    return {
+        "source_spreadsheet_id": source_spreadsheet_id,
+        "source_sheet_id": int(source_sheet_id),
+        "destination_spreadsheet_id": destination_spreadsheet_id,
+        "new_sheet_id": resp.get("sheetId"),
+        "new_title": resp.get("title"),
+        "new_index": resp.get("index"),
+    }
+
+
+@mcp.tool()
+async def sheets_freeze(
+    spreadsheet_id: str, sheet_id: int, rows: int = 0, cols: int = 0
+) -> dict[str, Any]:
+    """Freeze the first *rows* rows and *cols* columns of a tab.
+
+    `rows=1` freezes the header row. `rows=0, cols=0` unfreezes everything.
+    """
+    await _check_safety(spreadsheet_id)
+    await asyncio.to_thread(
+        api.freeze,
+        get_sheets_service(),
+        spreadsheet_id=spreadsheet_id,
+        sheet_id=sheet_id,
+        rows=rows,
+        cols=cols,
+    )
+    return {
+        "spreadsheet_id": spreadsheet_id,
+        "sheet_id": int(sheet_id),
+        "frozen_rows": int(rows),
+        "frozen_cols": int(cols),
+    }
+
+
+@mcp.tool()
+async def sheets_merge_cells(
+    spreadsheet_id: str,
+    sheet_id: int,
+    start_row_index: int,
+    end_row_index: int,
+    start_column_index: int,
+    end_column_index: int,
+    mode: str = "MERGE_ALL",
+) -> dict[str, Any]:
+    """Merge or unmerge cells in a GridRange.
+
+    `mode`:
+      - ``MERGE_ALL`` (default) — merge into a single cell.
+      - ``MERGE_COLUMNS`` — merge each column independently across rows.
+      - ``MERGE_ROWS`` — merge each row independently across columns.
+      - ``UNMERGE`` — split any merged regions overlapping the range.
+
+    Indices are 0-based; end indices are exclusive.
+    """
+    await _check_safety(spreadsheet_id)
+    sheets_svc = get_sheets_service()
+    if mode == "UNMERGE":
+        await asyncio.to_thread(
+            api.unmerge_cells,
+            sheets_svc,
+            spreadsheet_id=spreadsheet_id,
+            sheet_id=sheet_id,
+            start_row_index=start_row_index,
+            end_row_index=end_row_index,
+            start_column_index=start_column_index,
+            end_column_index=end_column_index,
+        )
+    else:
+        if mode not in ("MERGE_ALL", "MERGE_COLUMNS", "MERGE_ROWS"):
+            return {
+                "error": f"invalid mode {mode!r}; expected one of "
+                "MERGE_ALL/MERGE_COLUMNS/MERGE_ROWS/UNMERGE"
+            }
+        await asyncio.to_thread(
+            api.merge_cells,
+            sheets_svc,
+            spreadsheet_id=spreadsheet_id,
+            sheet_id=sheet_id,
+            start_row_index=start_row_index,
+            end_row_index=end_row_index,
+            start_column_index=start_column_index,
+            end_column_index=end_column_index,
+            merge_type=mode,
+        )
+    return {
+        "spreadsheet_id": spreadsheet_id,
+        "sheet_id": int(sheet_id),
+        "mode": mode,
+    }
+
+
+@mcp.tool()
 async def sheets_duplicate_sheet(
     spreadsheet_id: str, sheet_id: int, new_title: str | None = None
 ) -> dict[str, Any]:

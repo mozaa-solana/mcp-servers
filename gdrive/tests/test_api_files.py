@@ -83,3 +83,22 @@ class TestFilesAPI:
         captured = _record_call(svc, "update")
         api.trash(svc, file_id="F")
         assert captured["body"] == {"trashed": True}
+
+    def test_untrash_sets_flag(self):
+        svc = MagicMock()
+        captured = _record_call(svc, "update")
+        api.untrash(svc, file_id="F")
+        assert captured["body"] == {"trashed": False}
+
+    def test_copy_with_name_and_parent(self):
+        svc = MagicMock()
+        captured = _record_call(svc, "copy")
+        api.copy_file(svc, file_id="F", name="copy.txt", parent_id="P")
+        assert captured["fileId"] == "F"
+        assert captured["body"] == {"name": "copy.txt", "parents": ["P"]}
+
+    def test_copy_minimal(self):
+        svc = MagicMock()
+        captured = _record_call(svc, "copy")
+        api.copy_file(svc, file_id="F")
+        assert captured["body"] == {}
