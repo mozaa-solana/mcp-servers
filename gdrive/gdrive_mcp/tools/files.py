@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from typing import Any
 
 from ..api import files as files_api
 from ..normalize import clamp, is_folder, paginated, trim_file
 from ..safety import assert_in_working_folder
-from ._registry import get_config, get_service, mcp
+from ._registry import get_config, get_service, handle_drive_errors, mcp
 
 
 def _escape(value: str) -> str:
@@ -21,6 +22,7 @@ def _escape(value: str) -> str:
 
 
 @mcp.tool()
+@handle_drive_errors
 async def drive_list_files(
     folder_id: str | None = None,
     name_contains: str | None = None,
@@ -54,10 +56,12 @@ async def drive_list_files(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def drive_search(
     query: str,
     max_results: int = 50,
     cursor: str | None = None,
+    include_trashed: bool = False,
 ) -> dict[str, Any]:
     """Run a raw Drive query string (full operator support).
 
@@ -67,11 +71,25 @@ async def drive_search(
       - `mimeType = 'application/vnd.google-apps.spreadsheet'`
       - `modifiedTime > '2026-01-01T00:00:00'`
 
-    The tool always appends `and trashed = false` for safety. Combine clauses
-    with `and` / `or` and wrap text in single quotes.
+    By default the trailing `and trashed = false` is appended. Set
+    `include_trashed=True` to opt in to listing trashed files explicitly —
+    do **not** rely on absence of trashed files in normal use; the SA's
+    permissions are the actual security boundary, not this query clause.
+    Combine clauses with `and` / `or` and wrap text in single quotes.
+
+    Security note: `query` is forwarded to Drive as-is. Drive's query
+    language has no code-execution surface, but a caller with write access
+    to this tool can craft queries that surface trashed/hidden files
+    available to the SA. Treat `query` as untrusted input from the agent
+    and bound the SA's grants accordingly.
     """
     n = clamp(max_results, 1, 1000)
-    q = f"({query}) and trashed = false" if query else "trashed = false"
+    if not query:
+        q = "trashed = false"
+    elif include_trashed:
+        q = f"({query})"
+    else:
+        q = f"({query}) and trashed = false"
     data = await asyncio.to_thread(
         files_api.list_files,
         get_service(),
@@ -87,6 +105,7 @@ async def drive_search(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def drive_get_metadata(file_id: str) -> dict[str, Any]:
     """Fetch metadata (name, mime, size, parents, owners, modified time) for a file."""
     data = await asyncio.to_thread(files_api.get_metadata, get_service(), file_id=file_id)
@@ -94,6 +113,7 @@ async def drive_get_metadata(file_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+@handle_drive_errors
 async def drive_get_folder_tree(
     folder_id: str,
     max_depth: int = 3,
@@ -110,9 +130,9 @@ async def drive_get_folder_tree(
     svc = get_service()
 
     out: list[dict[str, Any]] = []
-    queue: list[tuple[str, int]] = [(folder_id, 0)]
+    queue: deque[tuple[str, int]] = deque([(folder_id, 0)])
     while queue:
-        fid, lvl = queue.pop(0)
+        fid, lvl = queue.popleft()
         if lvl >= depth:
             continue
         page = await asyncio.to_thread(
@@ -137,6 +157,7 @@ async def drive_get_folder_tree(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def drive_create_folder(
     name: str, parent_id: str | None = None
 ) -> dict[str, Any]:
@@ -154,6 +175,7 @@ async def drive_create_folder(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def drive_rename_file(file_id: str, new_name: str) -> dict[str, Any]:
     """Rename a file or folder."""
     svc = get_service()
@@ -168,6 +190,7 @@ async def drive_rename_file(file_id: str, new_name: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+@handle_drive_errors
 async def drive_move_file(file_id: str, new_parent_id: str) -> dict[str, Any]:
     """Move *file_id* to *new_parent_id*. Both old and new locations must be
     inside the working folder when the safety rail is enabled."""
@@ -186,6 +209,7 @@ async def drive_move_file(file_id: str, new_parent_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+@handle_drive_errors
 async def drive_trash_file(file_id: str) -> dict[str, Any]:
     """Move a file to Trash. **Recoverable for 30 days via the Drive web UI** —
     this is NOT a permanent delete. Permanent deletion is intentionally not
@@ -201,6 +225,7 @@ async def drive_trash_file(file_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+@handle_drive_errors
 async def drive_untrash_file(file_id: str) -> dict[str, Any]:
     """Restore a file from Trash. Pair with `drive_trash_file`."""
     svc = get_service()
@@ -213,6 +238,7 @@ async def drive_untrash_file(file_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+@handle_drive_errors
 async def drive_copy_file(
     file_id: str, new_name: str | None = None, parent_id: str | None = None
 ) -> dict[str, Any]:

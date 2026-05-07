@@ -52,12 +52,17 @@ def _patch_registry_everywhere(monkeypatch, cfg, drive_stub, sheets_stub):
             monkeypatch.setattr(mod, "get_sheets_service", lambda s=sheets_stub: s)
 
 
-def _build_pair(monkeypatch, working_folder_id: str | None = None):
+def _build_pair(
+    monkeypatch,
+    working_folder_id: str | None = None,
+    local_sandbox_dir: str | None = None,
+):
     from gdrive_mcp.config import Config
 
     fake_cfg = Config(
         credentials_path="/tmp/fake-key.json",
         working_folder_id=working_folder_id,
+        local_sandbox_dir=local_sandbox_dir,
         default_page_size=100,
     )
     drive_stub = _build_service_stub()
@@ -95,13 +100,43 @@ def sheets_svc_with_safety(svc_with_safety) -> tuple[MagicMock, MagicMock, str]:
     return drive_stub, drive_stub._sheets_stub, root
 
 
+@pytest.fixture
+def svc_with_local_sandbox(monkeypatch, tmp_path) -> tuple[MagicMock, str]:
+    """`svc` + `GDRIVE_LOCAL_SANDBOX_DIR` set to a tmp dir."""
+    sandbox = str(tmp_path / "sandbox")
+    import os
+
+    os.makedirs(sandbox, exist_ok=True)
+    drive_stub = _build_pair(monkeypatch, local_sandbox_dir=sandbox)
+    return drive_stub, sandbox
+
+
 def program_files_list(svc: MagicMock, payload: dict[str, Any]) -> None:
     """Helper: configure `service.files().list(...).execute()` to return *payload*."""
     svc.files.return_value.list.return_value.execute.return_value = payload
 
 
 def program_files_get(svc: MagicMock, payload: dict[str, Any]) -> None:
+    """Stub ``files().get(...)`` to return *payload* for **any** fileId."""
     svc.files.return_value.get.return_value.execute.return_value = payload
+
+
+def program_files_get_per_id(
+    svc: MagicMock, mapping: dict[str, dict[str, Any]]
+) -> None:
+    """Stronger sibling of :func:`program_files_get`: dispatch by ``fileId``.
+
+    Use this when a tool issues two or more ``files().get`` calls with
+    different fileIds in the same flow (e.g. metadata lookup + safety-rail
+    parent walk) — a single shared payload would let bugs slip through.
+    """
+
+    def get_call(fileId, fields=None, supportsAllDrives=None, **_):
+        m = MagicMock()
+        m.execute.return_value = mapping.get(fileId, {})
+        return m
+
+    svc.files.return_value.get.side_effect = get_call
 
 
 def program_files_create(svc: MagicMock, payload: dict[str, Any]) -> None:

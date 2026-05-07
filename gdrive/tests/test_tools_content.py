@@ -68,6 +68,21 @@ class TestGetContent:
         assert out["truncated"] is True
         assert len(out["content"]) <= 5
 
+    async def test_truncate_respects_byte_boundary_for_multibyte(
+        self, svc, monkeypatch
+    ):
+        """Pre-fix bug: ``text[:N]`` sliced by codepoint, so 4-byte chars (CJK,
+        emoji) blew past the byte cap by up to 4×. Verify the fixed
+        encode→slice→decode path produces ≤ N bytes for multibyte text."""
+        monkeypatch.setattr(tools, "MAX_INLINE_BYTES", 100)
+        # 100 emoji = 400 bytes (each takes 4 bytes in UTF-8).
+        payload = ("🐍" * 100).encode("utf-8")
+        program_files_get(svc, {"name": "x.md", "mimeType": "text/markdown"})
+        _program_get_media(svc, payload)
+        out = await tools.drive_get_content("X")
+        assert out["truncated"] is True
+        assert len(out["content"].encode("utf-8")) <= 100
+
 
 # --------------------------------------------------------------------------
 # drive_export_file (download to disk)
@@ -98,6 +113,52 @@ class TestExportFile:
         program_files_get(svc, {"name": "x", "mimeType": "text/plain"})
         out = await tools.drive_export_file("X", "text/plain", "/no/such/dir/x.txt")
         assert "parent directory" in out["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+class TestLocalSandbox:
+    """Path-traversal protection (regression coverage for the v1.1 review)."""
+
+    async def test_export_outside_sandbox_rejected(self, svc_with_local_sandbox):
+        svc, _sandbox = svc_with_local_sandbox
+        out = await tools.drive_export_file("X", "text/plain", "/etc/passwd")
+        assert out.get("violation") == "local_sandbox"
+
+    async def test_export_inside_sandbox_passes(self, svc_with_local_sandbox):
+        svc, sandbox = svc_with_local_sandbox
+        program_files_get(svc, {"name": "x", "mimeType": "text/plain"})
+        _program_get_media(svc, b"hello")
+        target = f"{sandbox}/out.txt"
+        out = await tools.drive_export_file("X", "text/plain", target)
+        assert out["bytes_written"] == 5
+        assert out["saved_to"] == target
+
+    async def test_upload_outside_sandbox_rejected(
+        self, svc_with_local_sandbox, tmp_path
+    ):
+        svc, _sandbox = svc_with_local_sandbox
+        sneaky = tmp_path / "outside.txt"
+        sneaky.write_text("oops")
+        out = await tools.drive_upload_file(str(sneaky), parent_id="P")
+        assert out.get("violation") == "local_sandbox"
+
+    async def test_upload_inside_sandbox_passes(self, svc_with_local_sandbox):
+        svc, sandbox = svc_with_local_sandbox
+        import os
+
+        f = f"{sandbox}/x.txt"
+        with open(f, "w") as fh:
+            fh.write("hi")
+        program_files_create(svc, {"id": "F", "name": "x.txt", "mimeType": "text/plain"})
+        out = await tools.drive_upload_file(f, parent_id="P")
+        assert out["id"] == "F"
+
+    async def test_dotdot_traversal_rejected(self, svc_with_local_sandbox):
+        svc, sandbox = svc_with_local_sandbox
+        sneaky = f"{sandbox}/../../../etc/passwd"
+        out = await tools.drive_export_file("X", "text/plain", sneaky)
+        assert out.get("violation") == "local_sandbox"
 
 
 # --------------------------------------------------------------------------
@@ -131,8 +192,8 @@ class TestUploadFile:
         f = tmp_path / "x.txt"
         f.write_text("hi")
         program_files_get(svc, {"parents": []})  # outside rail
-        with pytest.raises(SafetyViolation):
-            await tools.drive_upload_file(str(f), parent_id="OUTSIDE")
+        out = await tools.drive_upload_file(str(f), parent_id="OUTSIDE")
+        assert out.get("violation") == "working_folder", f"unexpected: {out}"
 
 
 @pytest.mark.asyncio
@@ -159,5 +220,5 @@ class TestUpdateContent:
     async def test_safety_rail_blocks_outside(self, svc_with_safety):
         svc, _ = svc_with_safety
         program_files_get(svc, {"parents": []})
-        with pytest.raises(SafetyViolation):
-            await tools.drive_update_file_content("F", "x")
+        out = await tools.drive_update_file_content("F", "x")
+        assert out.get("violation") == "working_folder", f"unexpected: {out}"

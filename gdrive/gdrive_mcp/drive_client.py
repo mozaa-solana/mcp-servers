@@ -51,4 +51,8 @@ def wrap_http_error(exc: HttpError) -> DriveAPIError:
         body = exc.error_details or exc.reason
     except Exception:
         body = str(exc)
-    return DriveAPIError(int(status or 0), str(reason), body)
+    try:
+        status_int = int(status or 0)
+    except (TypeError, ValueError):
+        status_int = 0
+    return DriveAPIError(status_int, str(reason), body)

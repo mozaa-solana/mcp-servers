@@ -11,7 +11,7 @@ integrations).
 | **Total tools** | 72 |
 | **Transport** | stdio (host spawns the process) |
 | **Architecture** | Layered: `config / client / normalize / api / tools / tests` |
-| **Tests** | 257 unit tests across all servers, 100% offline |
+| **Tests** | 282 unit tests across all servers, 100% offline |
 
 ---
 

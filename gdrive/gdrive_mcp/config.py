@@ -24,8 +24,13 @@ class Config:
     """Filesystem path to a Google service-account JSON key file."""
 
     working_folder_id: str | None
-    """Optional safety rail. If set, write operations refuse to touch anything
-    outside this folder (or its descendants)."""
+    """Optional Drive safety rail. If set, write operations refuse to touch
+    anything outside this folder (or its descendants)."""
+
+    local_sandbox_dir: str | None
+    """Optional local-disk safety rail. If set, every tool that reads/writes a
+    local path (``drive_upload_file``, ``drive_export_file``) refuses paths
+    that resolve outside this directory (path-traversal protection)."""
 
     default_page_size: int
 
@@ -48,6 +53,12 @@ class Config:
 
         working = (env.get("GDRIVE_WORKING_FOLDER_ID") or "").strip() or None
 
+        sandbox = (env.get("GDRIVE_LOCAL_SANDBOX_DIR") or "").strip() or None
+        if sandbox and not os.path.isdir(sandbox):
+            raise ConfigError(
+                f"GDRIVE_LOCAL_SANDBOX_DIR must be an existing directory: {sandbox}"
+            )
+
         try:
             page_size = int(env.get("GDRIVE_DEFAULT_PAGE_SIZE", DEFAULT_PAGE_SIZE))
         except ValueError as exc:
@@ -56,5 +67,6 @@ class Config:
         return cls(
             credentials_path=path,
             working_folder_id=working,
+            local_sandbox_dir=sandbox,
             default_page_size=page_size,
         )

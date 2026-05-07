@@ -8,10 +8,11 @@ from ..api import about as about_api
 from ..api import drives as drives_api
 from ..api import files as files_api
 from ..normalize import clamp, paginated, trim_file
-from ._registry import get_service, mcp
+from ._registry import get_service, handle_drive_errors, mcp
 
 
 @mcp.tool()
+@handle_drive_errors
 async def drive_about() -> dict[str, Any]:
     """Show the service-account identity and Drive storage quota.
 
@@ -35,6 +36,7 @@ async def drive_about() -> dict[str, Any]:
 
 
 @mcp.tool()
+@handle_drive_errors
 async def drive_list_shared_with_me(
     max_results: int = 50,
     cursor: str | None = None,
@@ -58,6 +60,7 @@ async def drive_list_shared_with_me(
 
 
 @mcp.tool()
+@handle_drive_errors
 async def drive_list_drives(
     max_results: int = 50, cursor: str | None = None
 ) -> dict[str, Any]:

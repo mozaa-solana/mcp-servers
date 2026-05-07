@@ -146,8 +146,8 @@ class TestUpdateValues:
     async def test_safety_rail_blocks(self, sheets_svc_with_safety):
         drive_stub, sheets_stub, _root = sheets_svc_with_safety
         program_files_get(drive_stub, {"parents": []})  # outside rail
-        with pytest.raises(SafetyViolation):
-            await tools.sheets_update_values("SS_OUTSIDE", "A1", [[1]])
+        out = await tools.sheets_update_values("SS_OUTSIDE", "A1", [[1]])
+        assert out.get("violation") == "working_folder", f"unexpected: {out}"
 
     async def test_safety_rail_allows_inside(self, sheets_svc_with_safety):
         drive_stub, sheets_stub, root = sheets_svc_with_safety
@@ -352,8 +352,8 @@ class TestCopySheetTo:
     async def test_safety_rail_on_destination(self, sheets_svc_with_safety):
         drive_stub, sheets_stub, _ = sheets_svc_with_safety
         program_files_get(drive_stub, {"parents": []})  # dest outside rail
-        with pytest.raises(SafetyViolation):
-            await tools.sheets_copy_sheet_to_spreadsheet("SS1", 0, "SS2_OUTSIDE")
+        out = await tools.sheets_copy_sheet_to_spreadsheet("SS1", 0, "SS2_OUTSIDE")
+        assert out.get("violation") == "working_folder", f"unexpected: {out}"
 
 
 @pytest.mark.asyncio

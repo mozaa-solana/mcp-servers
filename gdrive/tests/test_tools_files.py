@@ -121,8 +121,8 @@ class TestCreateFolder:
         svc, _ = svc_with_safety
         # parent walk returns no parents → outside rail
         program_files_get(svc, {"parents": []})
-        with pytest.raises(SafetyViolation):
-            await tools.drive_create_folder("N", parent_id="OUTSIDE")
+        out = await tools.drive_create_folder("N", parent_id="OUTSIDE")
+        assert out.get("violation") == "working_folder", f"unexpected: {out}"
 
     async def test_safety_rail_allows_inside_parent(self, svc_with_safety):
         svc, root = svc_with_safety
@@ -138,8 +138,8 @@ class TestRenameMoveTrash:
     async def test_rename_blocked_outside_rail(self, svc_with_safety):
         svc, _ = svc_with_safety
         program_files_get(svc, {"parents": []})
-        with pytest.raises(SafetyViolation):
-            await tools.drive_rename_file("F", "new")
+        out = await tools.drive_rename_file("F", "new")
+        assert out.get("violation") == "working_folder", f"unexpected: {out}"
 
     async def test_move_validates_both_endpoints(self, svc_with_safety):
         svc, root = svc_with_safety
@@ -148,8 +148,8 @@ class TestRenameMoveTrash:
             {"parents": [root]},  # file inside
             {"parents": []},  # new_parent outside
         ]
-        with pytest.raises(SafetyViolation):
-            await tools.drive_move_file("F", "NEW_PARENT")
+        out = await tools.drive_move_file("F", "NEW_PARENT")
+        assert out.get("violation") == "working_folder", f"unexpected: {out}"
 
     async def test_trash_returns_trimmed(self, svc):
         program_files_update(svc, {"id": "F", "name": "g", "trashed": True})
@@ -168,8 +168,8 @@ class TestUntrash:
     async def test_safety_rail_blocks(self, svc_with_safety):
         svc, _ = svc_with_safety
         program_files_get(svc, {"parents": []})
-        with pytest.raises(SafetyViolation):
-            await tools.drive_untrash_file("F")
+        out = await tools.drive_untrash_file("F")
+        assert out.get("violation") == "working_folder", f"unexpected: {out}"
 
 
 @pytest.mark.asyncio
@@ -193,11 +193,11 @@ class TestCopyFile:
     async def test_safety_rail_checks_parent_when_given(self, svc_with_safety):
         svc, _ = svc_with_safety
         program_files_get(svc, {"parents": []})  # parent outside rail
-        with pytest.raises(SafetyViolation):
-            await tools.drive_copy_file("F", parent_id="OUTSIDE")
+        out = await tools.drive_copy_file("F", parent_id="OUTSIDE")
+        assert out.get("violation") == "working_folder", f"unexpected: {out}"
 
     async def test_safety_rail_checks_source_when_no_parent(self, svc_with_safety):
         svc, _ = svc_with_safety
         program_files_get(svc, {"parents": []})  # source outside rail
-        with pytest.raises(SafetyViolation):
-            await tools.drive_copy_file("F")
+        out = await tools.drive_copy_file("F")
+        assert out.get("violation") == "working_folder", f"unexpected: {out}"
