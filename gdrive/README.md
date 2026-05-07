@@ -1,8 +1,8 @@
 # gdrive MCP server
 
-**Google Drive v3 + Sheets v4** access for MCP agents through a single Service Account.
+**Google Drive v3 + Sheets v4 + Docs v1** access for MCP agents through a single Service Account.
 
-42 tools: 21 Drive + 21 Sheets. No browser, no OAuth consent flow, no refresh tokens.
+62 tools: 21 Drive + 21 Sheets + 20 Docs. No browser, no OAuth consent flow, no refresh tokens.
 
 > **Scope.** Read + safe write. No permanent delete, no permission mutations, no cell formatting.
 
@@ -30,7 +30,7 @@ EOF
 )
 ```
 
-Expect 42 tools in the `tools/list` response.
+Expect 62 tools in the `tools/list` response.
 
 > **Locked-down distros** (Ubuntu 24.04+ without `python3-venv`):
 > `pip3 install --user --break-system-packages -r requirements.txt`
@@ -174,6 +174,66 @@ Range strings use **A1 notation**: `Sheet1!A1:B10`, `'My Sheet'!A:B`. Structure 
 | `sheets_freeze(spreadsheet_id, sheet_id, rows=0, cols=0)` | Freeze first N rows/cols. `rows=0, cols=0` unfreezes. |
 | `sheets_merge_cells(spreadsheet_id, sheet_id, start_row, end_row, start_col, end_col, mode)` | `mode`: `MERGE_ALL` (default), `MERGE_COLUMNS`, `MERGE_ROWS`, `UNMERGE`. |
 
+### Docs — Read (2 tools)
+
+| Tool | Description |
+|---|---|
+| `docs_get(document_id)` | Full document structure: paragraphs, tables, named ranges, headers/footers, inline objects. |
+| `docs_get_text(document_id)` | Extract plain text from the document body. |
+
+### Docs — Create (1 tool)
+
+| Tool | Description |
+|---|---|
+| `docs_create(title, parent_id?)` | Create a blank Google Doc. Quota gotcha applies on personal Gmail. |
+
+### Docs — Text editing (3 tools)
+
+| Tool | Description |
+|---|---|
+| `docs_insert_text(document_id, text, index?)` | Insert text at position (appends to end if no index). |
+| `docs_delete_range(document_id, start_index, end_index)` | Delete content between two UTF-16 indices. |
+| `docs_replace_text(document_id, find, replace, match_case?)` | Find & replace across entire document. |
+
+### Docs — Styling (2 tools)
+
+| Tool | Description |
+|---|---|
+| `docs_update_text_style(document_id, start, end, bold?, italic?, underline?, strikethrough?, font_size?, font_family?, link_url?)` | Apply text formatting to a range. |
+| `docs_update_paragraph_style(document_id, start, end, alignment?, heading?, indent_start?, line_spacing?)` | Set paragraph alignment, heading level, spacing. |
+
+### Docs — Lists (2 tools)
+
+| Tool | Description |
+|---|---|
+| `docs_create_bullets(document_id, start, end, preset?)` | Convert paragraphs to bullet/numbered list. |
+| `docs_delete_bullets(document_id, start, end)` | Remove bullets from paragraphs. |
+
+### Docs — Tables (5 tools)
+
+| Tool | Description |
+|---|---|
+| `docs_insert_table(document_id, rows, cols, index?)` | Insert table at position (or end). |
+| `docs_insert_table_row(document_id, table_start, row_index, column_index?, insert_below?)` | Insert row above/below reference cell. |
+| `docs_delete_table_row(document_id, table_start, row_index, column_index?)` | Delete row. |
+| `docs_insert_table_column(document_id, table_start, column_index, row_index?, insert_right?)` | Insert column left/right of reference cell. |
+| `docs_delete_table_column(document_id, table_start, column_index, row_index?)` | Delete column. |
+
+### Docs — Images (2 tools)
+
+| Tool | Description |
+|---|---|
+| `docs_insert_image(document_id, image_uri, index?, width_pt?, height_pt?)` | Insert image from URL. |
+| `docs_replace_image(document_id, image_object_id, image_uri)` | Replace an existing image. |
+
+### Docs — Headers / Footers / Footnotes (3 tools)
+
+| Tool | Description |
+|---|---|
+| `docs_create_header(document_id)` | Create header. Returns header ID. |
+| `docs_create_footer(document_id)` | Create footer. Returns footer ID. |
+| `docs_create_footnote(document_id, index?)` | Insert footnote at position. Returns footnote ID. |
+
 ### Not included in v1
 
 | Drive | Sheets |
@@ -305,12 +365,14 @@ gdrive/
 │   ├── safety.py                      working-folder rail
 │   ├── api/                           thin REST wrappers (sync — googleapiclient is sync)
 │   │   ├── about.py    files.py       content.py
+│   │   ├── docs.py                    Docs v1: get, create, batchUpdate helpers
 │   │   ├── revisions.py               permissions.py    sheets.py
 │   └── tools/                         async @mcp.tool() wrappers (asyncio.to_thread)
 │       ├── _registry.py               FastMCP singleton + lazy getters
 │       ├── about.py    files.py       content.py
+│       ├── docs.py                    20 Docs tools
 │       └── revisions.py               permissions.py    sheets.py
-└── tests/                             186 unit tests, fully offline
+└── tests/                             267 unit tests, fully offline
 ```
 
 Imports flow downward only:
@@ -331,10 +393,10 @@ Imports flow downward only:
 ## Tests
 
 ```bash
-.venv/bin/pytest -q          # 186 tests, ~1s
+.venv/bin/pytest -q          # 302 tests, ~1s
 ```
 
-Fully offline. `conftest.py` builds two `MagicMock` services (Drive + Sheets) and patches all getters in every tool module. No real Google credentials needed.
+Fully offline. `conftest.py` builds mock services (Drive + Sheets + Docs) and patches all getters in every tool module. No real Google credentials needed.
 
 ---
 
@@ -366,7 +428,7 @@ curl -sS "${ADMIN_AUTH[@]}" -H "Content-Type: application/json" \
   -X POST "http://localhost:18790/v1/mcp/servers/$SERVER_ID/grants/agent" \
   -d "{\"agent_id\":\"<agent-uuid>\",\"enabled\":true}"
 
-# Verify — should list all 42 tools
+# Verify — should list all 62 tools
 curl -sS "${ADMIN_AUTH[@]}" \
   "http://localhost:18790/v1/mcp/servers/$SERVER_ID/tools" | jq '.[].name'
 ```

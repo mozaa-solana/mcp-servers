@@ -139,13 +139,213 @@ def trim_permission(p: dict[str, Any] | None) -> dict[str, Any]:
     p = p or {}
     return {
         "id": p.get("id"),
-        "type": p.get("type"),  # user / group / domain / anyone
-        "role": p.get("role"),  # owner / organizer / fileOrganizer / writer / commenter / reader
+        "type": p.get("type"),
+        "role": p.get("role"),
         "email": p.get("emailAddress"),
         "domain": p.get("domain"),
         "name": p.get("displayName"),
         "deleted": p.get("deleted", False),
     }
+
+
+def trim_document(d: dict[str, Any] | None) -> dict[str, Any]:
+    d = d or {}
+    props = d.get("documentStyle") or {}
+    return {
+        "id": d.get("documentId"),
+        "title": d.get("title"),
+        "revision_id": d.get("revisionId"),
+        "body": _trim_body(d.get("body")),
+        "named_ranges": {
+            k: [{"id": nr.get("namedRangeId")}]
+            for k, ranges in (d.get("namedRanges") or {}).items()
+            for nr in (ranges.get("namedRanges") or [])
+        }
+        if d.get("namedRanges")
+        else {},
+        "headers": {
+            k: _trim_body(v.get("content"))
+            for k, v in (d.get("headers") or {}).items()
+        },
+        "footers": {
+            k: _trim_body(v.get("content"))
+            for k, v in (d.get("footers") or {}).items()
+        },
+        "footnotes": {
+            k: _trim_body(v.get("content"))
+            for k, v in (d.get("footnotes") or {}).items()
+        },
+        "inline_objects": {
+            k: {
+                "object_id": v.get("objectId"),
+                "mime_type": (v.get("inlineObjectProperties") or {})
+                .get("embeddedObject", {})
+                .get("mimeType"),
+                "content_uri": (v.get("inlineObjectProperties") or {})
+                .get("embeddedObject", {})
+                .get("imageProperties", {})
+                .get("contentUri"),
+            }
+            for k, v in (d.get("inlineObjects") or {}).items()
+        },
+        "document_style": {
+            "background_color": (props.get("background") or {}).get("color"),
+        },
+    }
+
+
+def _trim_body(body: dict[str, Any] | None) -> dict[str, Any]:
+    body = body or {}
+    elements = []
+    for el in body.get("content") or []:
+        out = _trim_structural_element(el)
+        if out:
+            elements.append(out)
+    return {"content": elements}
+
+
+def _trim_structural_element(el: dict[str, Any]) -> dict[str, Any] | None:
+    if "paragraph" in el:
+        p = el["paragraph"]
+        result: dict[str, Any] = {
+            "type": "paragraph",
+            "start_index": el.get("startIndex"),
+            "end_index": el.get("endIndex"),
+        }
+        style = p.get("paragraphStyle") or {}
+        if style.get("namedStyleType"):
+            result["style"] = style["namedStyleType"]
+        if style.get("alignment"):
+            result["alignment"] = style["alignment"]
+        elements_out = []
+        for pe in p.get("elements") or []:
+            elem_out = _trim_paragraph_element(pe)
+            if elem_out:
+                elements_out.append(elem_out)
+        if elements_out:
+            result["elements"] = elements_out
+        return result
+    if "table" in el:
+        t = el["table"]
+        rows_out = []
+        for row in t.get("tableRows") or []:
+            cells_out = []
+            for cell in row.get("tableCells") or []:
+                cell_elements = []
+                for ce in cell.get("content") or []:
+                    trimmed = _trim_structural_element(ce)
+                    if trimmed:
+                        cell_elements.append(trimmed)
+                cells_out.append({"content": cell_elements})
+            rows_out.append({"cells": cells_out})
+        return {
+            "type": "table",
+            "start_index": el.get("startIndex"),
+            "end_index": el.get("endIndex"),
+            "rows": len(t.get("tableRows") or []),
+            "columns": len(t["tableRows"][0].get("tableCells") or []) if t.get("tableRows") else 0,
+            "table_rows": rows_out,
+        }
+    if "sectionBreak" in el:
+        return {
+            "type": "section_break",
+            "start_index": el.get("startIndex"),
+            "end_index": el.get("endIndex"),
+        }
+    if "tableOfContents" in el:
+        return {
+            "type": "table_of_contents",
+            "start_index": el.get("startIndex"),
+            "end_index": el.get("endIndex"),
+        }
+    return None
+
+
+def _trim_paragraph_element(pe: dict[str, Any]) -> dict[str, Any] | None:
+    tr = pe.get("textRun")
+    if tr:
+        out: dict[str, Any] = {
+            "type": "text",
+            "content": tr.get("content", ""),
+            "start_index": pe.get("startIndex"),
+            "end_index": pe.get("endIndex"),
+        }
+        ts = tr.get("textStyle") or {}
+        if ts.get("bold"):
+            out["bold"] = True
+        if ts.get("italic"):
+            out["italic"] = True
+        if ts.get("underline"):
+            out["underline"] = True
+        if ts.get("strikethrough"):
+            out["strikethrough"] = True
+        if ts.get("link"):
+            url = ts["link"].get("url")
+            if url:
+                out["link"] = url
+        return out
+    ir = pe.get("inlineObjectElement")
+    if ir:
+        return {
+            "type": "inline_object",
+            "object_id": ir.get("inlineObjectId"),
+            "start_index": pe.get("startIndex"),
+            "end_index": pe.get("endIndex"),
+        }
+    if pe.get("pageBreak"):
+        return {
+            "type": "page_break",
+            "start_index": pe.get("startIndex"),
+            "end_index": pe.get("endIndex"),
+        }
+    fn = pe.get("footnoteReference")
+    if fn:
+        return {
+            "type": "footnote_reference",
+            "footnote_id": fn.get("footnoteId"),
+            "start_index": pe.get("startIndex"),
+            "end_index": pe.get("endIndex"),
+        }
+    if pe.get("horizontalRule"):
+        return {
+            "type": "horizontal_rule",
+            "start_index": pe.get("startIndex"),
+            "end_index": pe.get("endIndex"),
+        }
+    if pe.get("columnBreak"):
+        return {
+            "type": "column_break",
+            "start_index": pe.get("startIndex"),
+            "end_index": pe.get("endIndex"),
+        }
+    if pe.get("equation"):
+        return {
+            "type": "equation",
+            "start_index": pe.get("startIndex"),
+            "end_index": pe.get("endIndex"),
+        }
+    return None
+
+
+def extract_text(body: dict[str, Any] | None) -> str:
+    body = body or {}
+    parts: list[str] = []
+    for el in body.get("content") or []:
+        _collect_text(el, parts)
+    return "".join(parts).strip()
+
+
+def _collect_text(el: dict[str, Any], parts: list[str]) -> None:
+    if "paragraph" in el:
+        for pe in el["paragraph"].get("elements") or []:
+            tr = pe.get("textRun")
+            if tr:
+                parts.append(tr.get("content", ""))
+    elif "table" in el:
+        for row in el["table"].get("tableRows") or []:
+            for cell in row.get("tableCells") or []:
+                for ce in cell.get("content") or []:
+                    _collect_text(ce, parts)
 
 
 # --- Generic helpers -------------------------------------------------------

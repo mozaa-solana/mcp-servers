@@ -11,6 +11,7 @@ DEFAULT_PAGE_SIZE = 100
 DRIVE_SCOPES = (
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/documents",
 )
 
 

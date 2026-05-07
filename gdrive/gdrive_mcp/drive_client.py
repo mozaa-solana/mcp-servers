@@ -43,6 +43,13 @@ def build_sheets_service(config: Config) -> Any:
     )
 
 
+def build_docs_service(config: Config) -> Any:
+    """Construct a Docs v1 service client from a Config (same SA credentials)."""
+    return build(
+        "docs", "v1", credentials=_credentials(config), cache_discovery=False
+    )
+
+
 def wrap_http_error(exc: HttpError) -> DriveAPIError:
     """Convert googleapiclient HttpError into a domain error type."""
     status = getattr(exc.resp, "status", 0) if hasattr(exc, "resp") else 0
