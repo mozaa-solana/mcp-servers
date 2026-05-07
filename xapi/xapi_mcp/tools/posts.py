@@ -132,6 +132,34 @@ async def x_unretweet(tweet_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 @handle_x_errors
+async def x_pin_tweet(tweet_id: str) -> dict[str, Any]:
+    """Pin a tweet to the top of the authenticated user's profile.
+    Cost ≈ $0.015. The previous pinned tweet (if any) is replaced."""
+    cost_usd = cost.COST_ENGAGEMENT
+    get_budget().check(cost_usd)
+    if get_config().dry_run:
+        return {"dry_run": True, "would_pin": tweet_id}
+    raw = await asyncio.to_thread(api_posts.pin_tweet, get_client(), tweet_id)
+    get_budget().record(cost_usd)
+    return {"pinned": True, "id": tweet_id, "raw": raw, "estimated_cost_usd": cost_usd}
+
+
+@mcp.tool()
+@handle_x_errors
+async def x_unpin_tweet(tweet_id: str) -> dict[str, Any]:
+    """Unpin a tweet from the authenticated user's profile.
+    Pass the currently-pinned tweet id. Cost ≈ $0.015."""
+    cost_usd = cost.COST_ENGAGEMENT
+    get_budget().check(cost_usd)
+    if get_config().dry_run:
+        return {"dry_run": True, "would_unpin": tweet_id}
+    raw = await asyncio.to_thread(api_posts.unpin_tweet, get_client(), tweet_id)
+    get_budget().record(cost_usd)
+    return {"unpinned": True, "id": tweet_id, "raw": raw, "estimated_cost_usd": cost_usd}
+
+
+@mcp.tool()
+@handle_x_errors
 async def x_get_tweet(tweet_id: str) -> dict[str, Any]:
     """Look up a single tweet by ID (any author). Cost ≈ $0.005 (standard read)."""
     cost_usd = cost.COST_STANDARD_READ

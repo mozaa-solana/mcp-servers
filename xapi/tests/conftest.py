@@ -57,7 +57,10 @@ def _patch_registry(monkeypatch, fake_client):
     # The tool modules captured the originals at import-time — patch
     # there too so decorators that call get_config()/get_budget()/get_client()
     # see the test versions.
-    for mod_name in ("me", "posts", "users", "dms", "media", "budget"):
+    for mod_name in (
+        "me", "posts", "users", "dms", "media", "budget",
+        "account", "bookmarks", "research", "analytics",
+    ):
         mod = __import__(f"xapi_mcp.tools.{mod_name}", fromlist=["x"])
         if hasattr(mod, "get_config"):
             monkeypatch.setattr(mod, "get_config", lambda c=cfg: c)
@@ -87,7 +90,7 @@ def set_dry_run(monkeypatch, value: bool = True) -> Config:
 
     cfg = _make_config(dry_run=value)
     monkeypatch.setattr(reg, "get_config", lambda: cfg)
-    for mod_name in ("posts", "users", "dms"):
+    for mod_name in ("posts", "users", "dms", "account", "bookmarks"):
         mod = __import__(f"xapi_mcp.tools.{mod_name}", fromlist=["x"])
         if hasattr(mod, "get_config"):
             monkeypatch.setattr(mod, "get_config", lambda c=cfg: c)
@@ -100,7 +103,10 @@ def set_budget(monkeypatch, cap_usd: float | None) -> DailyBudget:
 
     budget = DailyBudget(cap_usd=cap_usd)
     monkeypatch.setattr(reg, "get_budget", lambda: budget)
-    for mod_name in ("me", "posts", "users", "dms", "budget"):
+    for mod_name in (
+        "me", "posts", "users", "dms", "budget",
+        "account", "bookmarks", "research", "analytics",
+    ):
         mod = __import__(f"xapi_mcp.tools.{mod_name}", fromlist=["x"])
         if hasattr(mod, "get_budget"):
             monkeypatch.setattr(mod, "get_budget", lambda b=budget: b)

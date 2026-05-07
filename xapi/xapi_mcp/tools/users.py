@@ -75,6 +75,35 @@ async def x_unfollow_user(handle_or_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 @handle_x_errors
+async def x_mute_user(handle_or_id: str) -> dict[str, Any]:
+    """Mute a user — their tweets/replies vanish from your timeline but
+    you stay following them. Pass ``@handle`` or numeric id. Cost ≈ $0.015."""
+    cost_usd = cost.COST_ENGAGEMENT
+    get_budget().check(cost_usd)
+    if get_config().dry_run:
+        return {"dry_run": True, "would_mute": handle_or_id}
+    target_id = await _resolve_user_id(handle_or_id)
+    raw = await asyncio.to_thread(api_users.mute, get_client(), target_id)
+    get_budget().record(cost_usd)
+    return {"muted": True, "target_id": target_id, "raw": raw, "estimated_cost_usd": cost_usd}
+
+
+@mcp.tool()
+@handle_x_errors
+async def x_unmute_user(handle_or_id: str) -> dict[str, Any]:
+    """Reverse a mute. Pass ``@handle`` or numeric id. Cost ≈ $0.015."""
+    cost_usd = cost.COST_ENGAGEMENT
+    get_budget().check(cost_usd)
+    if get_config().dry_run:
+        return {"dry_run": True, "would_unmute": handle_or_id}
+    target_id = await _resolve_user_id(handle_or_id)
+    raw = await asyncio.to_thread(api_users.unmute, get_client(), target_id)
+    get_budget().record(cost_usd)
+    return {"unmuted": True, "target_id": target_id, "raw": raw, "estimated_cost_usd": cost_usd}
+
+
+@mcp.tool()
+@handle_x_errors
 async def x_block_user(handle_or_id: str) -> dict[str, Any]:
     """Block a user. Pass ``@handle`` or numeric id. Cost ≈ $0.015."""
     cost_usd = cost.COST_ENGAGEMENT

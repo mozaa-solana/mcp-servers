@@ -8,10 +8,10 @@ integrations).
 | | |
 |---|---|
 | **Servers** | 3 |
-| **Total tools** | 89 |
+| **Total tools** | 109 |
 | **Transport** | stdio (host spawns the process) |
 | **Architecture** | Layered: `config / client / normalize / api / tools / tests` |
-| **Tests** | 350 unit tests across all servers, 100% offline |
+| **Tests** | 375 unit tests across all servers, 100% offline |
 
 ---
 
@@ -21,7 +21,7 @@ integrations).
 |---|---|---|---|
 | [socialdata/](./socialdata) | Twitter/X realtime **read** via [socialdata.tools](https://socialdata.tools) | **30** — search, users, tweets, lists, communities, spaces, social actions | `SOCIALDATA_API_KEY` |
 | [gdrive/](./gdrive) | Google Drive v3 + Sheets v4 (Service Account) | **42** — 21 Drive + 21 Sheets | `GOOGLE_APPLICATION_CREDENTIALS` |
-| [xapi/](./xapi) | Twitter/X **official** API (write, engagement, DMs) — pay-per-use | **17** — posts, engagement, users, DMs, media, budget | `X_API_KEY` + 3 OAuth1 tokens |
+| [xapi/](./xapi) | Twitter/X **official** API (write, engagement, DMs, profile, analytics) — pay-per-use | **37** — posts, engagement, users, DMs, media, profile, bookmarks, research, analytics, budget | `X_API_KEY` + 3 OAuth1 tokens |
 
 Each server has its own `README.md` with full tool reference, response
 shapes, and integration notes.
