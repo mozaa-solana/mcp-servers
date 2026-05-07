@@ -6,11 +6,11 @@ a single Service Account.
 
 | | |
 |---|---|
-| **Tools** | 30 — 18 Drive + 12 Sheets |
+| **Tools** | 42 — 21 Drive + 21 Sheets |
 | **Auth** | Service Account JSON key (no browser, no OAuth flow) |
 | **Scope** | Read + safe write. No permanent delete, no permission mutations, no cell formatting |
 | **Safety rail** | Optional `GDRIVE_WORKING_FOLDER_ID` confines all writes to one folder |
-| **Tests** | 124 unit tests, 100% offline (mocked googleapiclient) |
+| **Tests** | 161 unit tests, 100% offline (mocked googleapiclient) |
 | **Architecture** | Layered: `config / drive_client / normalize / safety / api / tools / tests` |
 
 ---
@@ -43,7 +43,7 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json \
   .venv/bin/python server.py
 ```
 
-Smoke test the stdio handshake — should return 30 tools:
+Smoke test the stdio handshake — should return 42 tools:
 
 ```bash
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json \
@@ -115,7 +115,7 @@ package never touches the environment — keeps tests clean.
 Drive list tools accept `cursor` and return `next_cursor` for pagination.
 Sheets tools don't paginate (Sheets API doesn't use cursors).
 
-### 🟦 Drive (18)
+### 🟦 Drive (21)
 
 #### Identity / discovery
 
@@ -123,6 +123,7 @@ Sheets tools don't paginate (Sheets API doesn't use cursors).
 |---|---|
 | `drive_about()` | SA email + Drive storage quota. **Run this first** — verifies auth wired up correctly. |
 | `drive_list_shared_with_me(max_results, cursor)` | The canonical "what can the bot see?" view. |
+| `drive_list_drives(max_results, cursor)` | Shared Drives the SA is a member of. Empty list is normal on personal Gmail. |
 
 #### Read
 
@@ -145,12 +146,14 @@ Sheets tools don't paginate (Sheets API doesn't use cursors).
 | Tool | Purpose |
 |---|---|
 | `drive_create_folder(name, parent_id?)` | Create folder. |
+| `drive_copy_file(file_id, new_name?, parent_id?)` | Duplicate a file ("copy from template" workflow). Defaults to "Copy of <orig>" in the source's parent. |
 | `drive_upload_file(local_path, name?, parent_id?, mime_type?)` | Upload binary or text from disk. |
 | `drive_create_text_file(name, content, parent_id?, mime_type)` | Create text/markdown/json from inline content. |
 | `drive_update_file_content(file_id, content, mime_type)` | Overwrite — old content kept in revision history. |
 | `drive_rename_file(file_id, new_name)` | Rename without moving. |
 | `drive_move_file(file_id, new_parent_id)` | Reparent (atomically removes old parents). |
 | `drive_trash_file(file_id)` | Move to Trash. **Recoverable for 30 days**. NOT permanent delete. |
+| `drive_untrash_file(file_id)` | Restore from Trash. Pair with `drive_trash_file`. |
 
 #### Revisions
 
@@ -165,12 +168,13 @@ Sheets tools don't paginate (Sheets API doesn't use cursors).
 |---|---|
 | `drive_list_permissions(file_id, cursor)` | Who has access (and what role). Use to debug "the bot can't see file X". |
 
-### 🟩 Sheets (12)
+### 🟩 Sheets (21)
 
-Range strings use **A1 notation**: `Sheet1!A1:B10`, `'My Sheet'!A:B`,
-`Sheet1!A:A`. Wrap sheet names with spaces in single quotes. The
-`spreadsheet_id` is the same string as the Drive file id — find it via
-`drive_search` / `drive_list_files`.
+Range strings use **A1 notation** for value tools (`Sheet1!A1:B10`, `'My
+Sheet'!A:B`). Structure tools (insert/delete rows/cols, sort, merge) use
+**GridRange** with 0-based, end-exclusive indices. Wrap sheet names with
+spaces in single quotes. The `spreadsheet_id` is the same string as the
+Drive file id — find it via `drive_search` / `drive_list_files`.
 
 #### Read
 
@@ -188,8 +192,9 @@ Range strings use **A1 notation**: `Sheet1!A1:B10`, `'My Sheet'!A:B`,
 | `sheets_append_values(spreadsheet_id, range, values[][])` | Append rows after the last row of data. |
 | `sheets_clear_values(spreadsheet_id, range)` | Empty cells. Sheet structure unchanged. |
 | `sheets_batch_update_values(spreadsheet_id, data[])` | Multi-range overwrite. `data` = `[{"range": ..., "values": [[...]]}]`. |
+| `sheets_find_replace(spreadsheet_id, find, replace, sheet_id?, match_case?, match_entire_cell?)` | Find/replace text. Scope: a single tab (`sheet_id`) or all tabs. |
 
-#### Write — structure
+#### Write — structure (tab CRUD)
 
 | Tool | Purpose |
 |---|---|
@@ -198,6 +203,24 @@ Range strings use **A1 notation**: `Sheet1!A1:B10`, `'My Sheet'!A:B`,
 | `sheets_delete_sheet(spreadsheet_id, sheet_id)` | **Irreversible** — Drive doesn't keep deleted tabs in revision history reliably. |
 | `sheets_rename_sheet(spreadsheet_id, sheet_id, new_title)` | Rename a tab. |
 | `sheets_duplicate_sheet(spreadsheet_id, sheet_id, new_title?)` | Defaults to `Copy of <orig>`. |
+| `sheets_copy_sheet_to_spreadsheet(source_ss_id, source_sheet_id, dest_ss_id)` | Copy a tab into a *different* spreadsheet. Source unchanged. |
+
+#### Write — structure (rows / cols / sort)
+
+| Tool | Purpose |
+|---|---|
+| `sheets_insert_rows(spreadsheet_id, sheet_id, start_index, count)` | Insert blank rows at index. Different from `append` (after data) and `clear_values` (empty content only). |
+| `sheets_delete_rows(spreadsheet_id, sheet_id, start_index, count)` | Remove rows entirely. |
+| `sheets_insert_cols(spreadsheet_id, sheet_id, start_index, count)` | Insert blank columns at index (A=0, B=1, …). |
+| `sheets_delete_cols(spreadsheet_id, sheet_id, start_index, count)` | Remove columns entirely. |
+| `sheets_sort_range(spreadsheet_id, sheet_id, start_row, end_row, start_col, end_col, sort_column_index, descending?)` | Sort a GridRange by one column. `sort_column_index` is the **absolute** column. |
+
+#### Write — layout
+
+| Tool | Purpose |
+|---|---|
+| `sheets_freeze(spreadsheet_id, sheet_id, rows=0, cols=0)` | Freeze first N rows and/or first M columns. `rows=0, cols=0` unfreezes. |
+| `sheets_merge_cells(spreadsheet_id, sheet_id, start_row, end_row, start_col, end_col, mode)` | `mode`: `MERGE_ALL` (default), `MERGE_COLUMNS`, `MERGE_ROWS`, `UNMERGE`. |
 
 ### Intentionally NOT in v1
 
@@ -350,7 +373,7 @@ gdrive/
 │       ├── _registry.py               ← FastMCP singleton + lazy get_config / get_service / get_sheets_service
 │       ├── about.py    files.py    content.py
 │       └── revisions.py    permissions.py    sheets.py
-└── tests/                             ← 124 unit tests, fully offline
+└── tests/                             ← 161 unit tests, fully offline
 ```
 
 **Layering rules** (enforced by import direction):
@@ -372,7 +395,7 @@ the MCP event loop stays responsive.
 ## Tests
 
 ```bash
-.venv/bin/pytest -q          # 124 tests, ~0.7s
+.venv/bin/pytest -q          # 161 tests, ~1s
 ```
 
 100% offline. The conftest builds two `MagicMock` services (Drive +
@@ -393,7 +416,7 @@ needed.
 | `tools/revisions.py` | Native-file limitation, text decode, binary rejection |
 | `tools/permissions.py` | Listing + envelope |
 | `tools/sheets.py` | A1 range passthrough, value-render options, append vs update vs batch, structure mutations, safety-rail on spreadsheet parent |
-| `_registry` | All 30 tools registered via `mcp.list_tools()` |
+| `_registry` | All 42 tools registered via `mcp.list_tools()` |
 
 ---
 
@@ -425,7 +448,7 @@ curl -sS "${ADMIN_AUTH[@]}" -H "Content-Type: application/json" \
   -X POST "http://localhost:18790/v1/mcp/servers/$SERVER_ID/grants/agent" \
   -d "{\"agent_id\":\"<agent-uuid>\",\"enabled\":true}"
 
-# 3. Reload + verify (should list all 30 tools)
+# 3. Reload + verify (should list all 42 tools)
 curl -sS "${ADMIN_AUTH[@]}" \
   -X POST "http://localhost:18790/v1/mcp/servers/$SERVER_ID/reconnect"
 
