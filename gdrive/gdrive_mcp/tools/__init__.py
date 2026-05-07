@@ -1,7 +1,8 @@
-"""MCP tool wrappers — importing this package registers all 18 tools."""
+"""MCP tool wrappers — importing this package registers all tools."""
 from . import (  # noqa: F401  — side-effect: registers tools
     about,
     content,
+    docs,
     files,
     permissions,
     revisions,

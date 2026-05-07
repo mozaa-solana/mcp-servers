@@ -13,7 +13,7 @@ from googleapiclient.errors import HttpError
 from mcp.server.fastmcp import FastMCP
 
 from ..config import Config
-from ..drive_client import DriveAPIError, build_service, build_sheets_service, wrap_http_error
+from ..drive_client import DriveAPIError, build_docs_service, build_service, build_sheets_service, wrap_http_error
 from ..safety import LocalPathViolation, SafetyViolation
 
 mcp = FastMCP("gdrive")
@@ -76,8 +76,15 @@ def get_sheets_service() -> Any:
     return build_sheets_service(get_config())
 
 
+@lru_cache(maxsize=1)
+def get_docs_service() -> Any:
+    """Docs v1 service client (lazy, cached)."""
+    return build_docs_service(get_config())
+
+
 def reset_caches_for_tests() -> None:
     """Test hook — clear the lru_caches so monkey-patching takes effect."""
     get_config.cache_clear()
     get_service.cache_clear()
     get_sheets_service.cache_clear()
+    get_docs_service.cache_clear()

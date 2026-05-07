@@ -2,12 +2,12 @@
 
 Production-ready [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) servers for [goclaw](https://github.com/mozaa-solana/goclaw) and any MCP-compatible host.
 
-Three servers. 109 tools. Zero external dependencies at runtime beyond each server's SDK.
+Three servers. 129 tools. Zero external dependencies at runtime beyond each server's SDK.
 
 | Server | Purpose | Tools | Auth |
 |---|---|---|---|
 | [socialdata](./socialdata) | Twitter/X realtime **read** via [socialdata.tools](https://socialdata.tools) | 30 | `SOCIALDATA_API_KEY` |
-| [gdrive](./gdrive) | Google Drive v3 + Sheets v4 (Service Account) | 42 | `GOOGLE_APPLICATION_CREDENTIALS` |
+| [gdrive](./gdrive) | Google Drive v3 + Sheets v4 + Docs v1 (Service Account) | 62 | `GOOGLE_APPLICATION_CREDENTIALS` |
 | [xapi](./xapi) | Twitter/X **official** API — write, engagement, DMs, profile, analytics | 37 | `X_API_KEY` + 3 OAuth1 tokens |
 
 Each server has its own README with full tool reference, response shapes, and integration notes.
@@ -98,7 +98,7 @@ Imports flow downward only. No upward or circular dependencies.
 
 ## Tests
 
-All 375 tests are fully offline. No real API keys or network access required.
+All 491 tests are fully offline. No real API keys or network access required.
 
 ```bash
 cd ~/mcp-servers/<server>

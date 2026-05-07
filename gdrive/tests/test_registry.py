@@ -1,4 +1,4 @@
-"""Tool registration smoke test — ensure all 18 @mcp.tool() decorators ran."""
+"""Tool registration smoke test — ensure all @mcp.tool() decorators ran."""
 from __future__ import annotations
 
 import pytest
@@ -63,6 +63,35 @@ EXPECTED = {
     # layout
     "sheets_freeze",
     "sheets_merge_cells",
+    # ---- Docs (20) ----
+    # read
+    "docs_get",
+    "docs_get_text",
+    # create
+    "docs_create",
+    # text editing
+    "docs_insert_text",
+    "docs_delete_range",
+    "docs_replace_text",
+    # styling
+    "docs_update_text_style",
+    "docs_update_paragraph_style",
+    # lists
+    "docs_create_bullets",
+    "docs_delete_bullets",
+    # tables
+    "docs_insert_table",
+    "docs_insert_table_row",
+    "docs_delete_table_row",
+    "docs_insert_table_column",
+    "docs_delete_table_column",
+    # images
+    "docs_insert_image",
+    "docs_replace_image",
+    # headers/footers/footnotes
+    "docs_create_header",
+    "docs_create_footer",
+    "docs_create_footnote",
 }
 
 
@@ -74,4 +103,4 @@ async def test_all_tools_registered():
     extra = names - EXPECTED
     assert not missing, f"missing: {sorted(missing)}"
     assert not extra, f"unexpected extra: {sorted(extra)}"
-    assert len(EXPECTED) == 42
+    assert len(EXPECTED) == 62

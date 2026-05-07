@@ -30,17 +30,18 @@ def _build_service_stub() -> MagicMock:
     return svc
 
 
-_TOOL_MODULES = ("about", "content", "files", "permissions", "revisions", "sheets")
+_TOOL_MODULES = ("about", "content", "docs", "files", "permissions", "revisions", "sheets")
 
 
-def _patch_registry_everywhere(monkeypatch, cfg, drive_stub, sheets_stub):
-    """Patch get_config / get_service / get_sheets_service in _registry AND
+def _patch_registry_everywhere(monkeypatch, cfg, drive_stub, sheets_stub, docs_stub):
+    """Patch get_config / get_service / get_sheets_service / get_docs_service in _registry AND
     every tool module that already imported them at module load time."""
     from gdrive_mcp.tools import _registry
 
     monkeypatch.setattr(_registry, "get_config", lambda: cfg)
     monkeypatch.setattr(_registry, "get_service", lambda: drive_stub)
     monkeypatch.setattr(_registry, "get_sheets_service", lambda: sheets_stub)
+    monkeypatch.setattr(_registry, "get_docs_service", lambda: docs_stub)
 
     for name in _TOOL_MODULES:
         mod = __import__(f"gdrive_mcp.tools.{name}", fromlist=["*"])
@@ -50,6 +51,8 @@ def _patch_registry_everywhere(monkeypatch, cfg, drive_stub, sheets_stub):
             monkeypatch.setattr(mod, "get_service", lambda s=drive_stub: s)
         if hasattr(mod, "get_sheets_service"):
             monkeypatch.setattr(mod, "get_sheets_service", lambda s=sheets_stub: s)
+        if hasattr(mod, "get_docs_service"):
+            monkeypatch.setattr(mod, "get_docs_service", lambda s=docs_stub: s)
 
 
 def _build_pair(
@@ -67,10 +70,10 @@ def _build_pair(
     )
     drive_stub = _build_service_stub()
     sheets_stub = _build_service_stub()
-    _patch_registry_everywhere(monkeypatch, fake_cfg, drive_stub, sheets_stub)
-    # Stash sheets stub on drive stub so `sheets_svc` fixture can find it
-    # without re-running monkeypatch.
+    docs_stub = _build_service_stub()
+    _patch_registry_everywhere(monkeypatch, fake_cfg, drive_stub, sheets_stub, docs_stub)
     drive_stub._sheets_stub = sheets_stub
+    drive_stub._docs_stub = docs_stub
     return drive_stub
 
 
@@ -84,6 +87,12 @@ def svc(monkeypatch) -> MagicMock:
 def sheets_svc(svc) -> MagicMock:
     """Sheets service stub (composes with `svc` — they share monkeypatch)."""
     return svc._sheets_stub
+
+
+@pytest.fixture
+def docs_svc(svc) -> MagicMock:
+    """Docs service stub (composes with `svc` — they share monkeypatch)."""
+    return svc._docs_stub
 
 
 @pytest.fixture
@@ -220,3 +229,20 @@ def program_drives_list(svc: MagicMock, payload: dict[str, Any]) -> None:
 
 def program_files_copy(svc: MagicMock, payload: dict[str, Any]) -> None:
     svc.files.return_value.copy.return_value.execute.return_value = payload
+
+
+# --------------------------------------------------------------------------
+# Docs v1 helpers
+# --------------------------------------------------------------------------
+
+
+def program_documents_get(svc: MagicMock, payload: dict[str, Any]) -> None:
+    svc.documents.return_value.get.return_value.execute.return_value = payload
+
+
+def program_documents_create(svc: MagicMock, payload: dict[str, Any]) -> None:
+    svc.documents.return_value.create.return_value.execute.return_value = payload
+
+
+def program_documents_batch_update(svc: MagicMock, payload: dict[str, Any]) -> None:
+    svc.documents.return_value.batchUpdate.return_value.execute.return_value = payload
